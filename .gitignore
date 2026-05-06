@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+*.db
+*.db-journal
+*.crypt12
+*.crypt14
+*.crypt15
+.coverage
+htmlcov/
