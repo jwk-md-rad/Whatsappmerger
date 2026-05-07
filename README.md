@@ -9,6 +9,21 @@ Input: an extracted `ChatStorage.sqlite` plus the `Message/Media/` tree
 Output: one self-contained SQLite database with FTS5 full-text indexes
 plus a small local web viewer with thumbnails, filters, and a lightbox.
 
+## End-to-end walkthrough
+
+If you're starting from scratch — iPhone in hand, no archive yet — read
+**[docs/QUICKSTART.pdf](docs/QUICKSTART.pdf)** (or the markdown source
+[`docs/QUICKSTART.md`](docs/QUICKSTART.md)). It covers everything from
+making the iPhone backup with iMazing through ingesting, password
+setup, Tailscale install, and opening the archive on the phone.
+
+To rebuild the PDF after editing the markdown:
+
+```bash
+pip install -e .[docs]
+python docs/build_pdf.py
+```
+
 ## Install
 
 ```bash
