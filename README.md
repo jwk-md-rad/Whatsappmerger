@@ -42,6 +42,30 @@ wa-photos serve photos.db --port 9000
 If a password is set, the browser prompts via HTTP Basic Auth (any
 username, the password you set).
 
+### Access from your phone (anywhere) via Tailscale
+
+The server speaks plain HTTP. On a hostile network the password would
+travel in cleartext, so we use [Tailscale](https://tailscale.com/) (free
+for personal use) to put the laptop and phone on a private encrypted
+WireGuard overlay — no port-forwarding, no certificates, no public
+exposure.
+
+1. Install Tailscale on the laptop and on the phone, sign both into the
+   same account.
+2. On the laptop:
+   ```bash
+   wa-photos serve photos.db --host 0.0.0.0
+   ```
+3. The startup banner prints the URLs you can paste into the phone
+   browser, including the Tailscale MagicDNS one. Pick the Tailscale
+   URL — it works from any network.
+
+The first time you visit, the phone's browser will prompt for the
+password you set on the archive.
+
+If you only need access while on the same WiFi as the laptop, skip
+Tailscale and just use the LAN URL the banner prints.
+
 ## Search from the CLI
 
 ```bash

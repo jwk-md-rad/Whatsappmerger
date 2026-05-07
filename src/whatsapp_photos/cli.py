@@ -129,16 +129,29 @@ def _cmd_ingest(args) -> int:
 def _cmd_serve(args) -> int:
     import uvicorn
 
+    from . import netinfo
     from .web import create_app
 
     app = create_app(Path(args.db))
-    print(f"Serving photo archive at http://{args.host}:{args.port}/")
+    print(f"Serving photo archive on {netinfo.url_for(args.host, args.port)}")
+
+    if args.host in {"0.0.0.0", "::", ""}:
+        # Bound to all interfaces — surface URLs the user can actually paste
+        # into a phone browser.
+        lan = netinfo.primary_lan_ip()
+        if lan:
+            print(f"  LAN: {netinfo.url_for(lan, args.port)}")
+        for label, host in netinfo.tailscale_endpoints():
+            print(f"  {label}: {netinfo.url_for(host, args.port)}")
+    else:
+        print("  (bound to one interface; pass --host 0.0.0.0 to expose to your LAN/Tailscale)")
+
     conn = sqlite3.connect(f"file:{args.db}?mode=ro", uri=True)
     try:
         if auth_mod.has_password(conn):
             print("(Password protection: ON — your browser will prompt for credentials.)")
         else:
-            print("(Password protection: OFF — anyone on this host can read the archive.)")
+            print("(Password protection: OFF — anyone who can reach this server can read the archive.)")
     finally:
         conn.close()
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
