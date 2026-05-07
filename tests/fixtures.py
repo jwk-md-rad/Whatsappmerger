@@ -240,3 +240,238 @@ def _seed_legacy_a(conn: sqlite3.Connection) -> None:
 def _seed_legacy_b(conn: sqlite3.Connection) -> None:
     _add_legacy_msg(conn, "111@s.whatsapp.net", 0, "L1", "duplicate, ignored")
     _add_legacy_msg(conn, "222@s.whatsapp.net", 0, "L3", "legacy B3")
+
+
+# -- iOS (Core Data) fixtures ----------------------------------------------
+
+# A deliberately reduced ChatStorage.sqlite shape: enough Z* tables and
+# columns to drive the merge, with both Z_PRIMARYKEY and Z_METADATA so the
+# Core-Data-specific code paths are exercised.
+
+IOS_SCHEMA = [
+    """
+    CREATE TABLE Z_PRIMARYKEY (
+        Z_ENT INTEGER PRIMARY KEY,
+        Z_NAME TEXT,
+        Z_SUPER INTEGER,
+        Z_MAX INTEGER
+    )
+    """,
+    """
+    CREATE TABLE Z_METADATA (
+        Z_VERSION INTEGER PRIMARY KEY,
+        Z_UUID TEXT,
+        Z_PLIST BLOB
+    )
+    """,
+    """
+    CREATE TABLE ZWACHATSESSION (
+        Z_PK INTEGER PRIMARY KEY AUTOINCREMENT,
+        Z_ENT INTEGER,
+        Z_OPT INTEGER,
+        ZCONTACTJID TEXT UNIQUE,
+        ZSESSIONTYPE INTEGER,
+        ZPARTNERNAME TEXT,
+        ZLASTMESSAGE INTEGER,
+        ZLASTMESSAGEDATE REAL,
+        ZMESSAGECOUNTER INTEGER
+    )
+    """,
+    """
+    CREATE TABLE ZWAMESSAGE (
+        Z_PK INTEGER PRIMARY KEY AUTOINCREMENT,
+        Z_ENT INTEGER,
+        Z_OPT INTEGER,
+        ZCHATSESSION INTEGER NOT NULL,
+        ZGROUPMEMBER INTEGER,
+        ZMEDIAITEM INTEGER,
+        ZISFROMME INTEGER NOT NULL,
+        ZSTANZAID TEXT,
+        ZMESSAGEDATE REAL,
+        ZMESSAGETYPE INTEGER,
+        ZTEXT TEXT,
+        ZFROMJID TEXT,
+        ZTOJID TEXT
+    )
+    """,
+    """
+    CREATE TABLE ZWAMEDIAITEM (
+        Z_PK INTEGER PRIMARY KEY AUTOINCREMENT,
+        Z_ENT INTEGER,
+        Z_OPT INTEGER,
+        ZMESSAGE INTEGER UNIQUE,
+        ZMEDIALOCALPATH TEXT,
+        ZFILESIZE INTEGER
+    )
+    """,
+    """
+    CREATE TABLE ZWAGROUPMEMBER (
+        Z_PK INTEGER PRIMARY KEY AUTOINCREMENT,
+        Z_ENT INTEGER,
+        Z_OPT INTEGER,
+        ZCHATSESSION INTEGER NOT NULL,
+        ZMEMBERJID TEXT NOT NULL,
+        ZCONTACTNAME TEXT,
+        UNIQUE (ZCHATSESSION, ZMEMBERJID)
+    )
+    """,
+    """
+    CREATE TABLE ZWAMESSAGEINFO (
+        Z_PK INTEGER PRIMARY KEY AUTOINCREMENT,
+        Z_ENT INTEGER,
+        Z_OPT INTEGER,
+        ZMESSAGE INTEGER UNIQUE,
+        ZRECEIPTINFO BLOB
+    )
+    """,
+]
+
+# Entity-id assignments. In the "B" fixture they're deliberately different
+# from "A" so the entity-id remap path is exercised.
+IOS_ENTITIES_A = {
+    "WAChatSession": 1,
+    "WAMessage": 2,
+    "WAMediaItem": 3,
+    "WAGroupMember": 4,
+    "WAMessageInfo": 5,
+}
+IOS_ENTITIES_B = {
+    "WAChatSession": 11,
+    "WAMessage": 12,
+    "WAMediaItem": 13,
+    "WAGroupMember": 14,
+    "WAMessageInfo": 15,
+}
+
+
+def make_ios_db(
+    path: Path,
+    *,
+    dataset: str,
+    model_plist: bytes = b"<plist-A>",
+) -> None:
+    """Build a synthetic ChatStorage.sqlite-shaped fixture."""
+    conn = sqlite3.connect(path)
+    try:
+        _exec_all(conn, IOS_SCHEMA)
+        if dataset == "A":
+            _seed_ios(conn, IOS_ENTITIES_A, _seed_ios_a, model_plist)
+        elif dataset == "B":
+            _seed_ios(conn, IOS_ENTITIES_B, _seed_ios_b, model_plist)
+        else:
+            raise ValueError(dataset)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _seed_ios(conn, entities: dict[str, int], seed_fn, model_plist: bytes) -> None:
+    for name, ent in entities.items():
+        conn.execute(
+            "INSERT INTO Z_PRIMARYKEY (Z_ENT, Z_NAME, Z_SUPER, Z_MAX) VALUES (?, ?, 0, 0)",
+            (ent, name),
+        )
+    conn.execute(
+        "INSERT INTO Z_METADATA (Z_VERSION, Z_UUID, Z_PLIST) VALUES (1, 'uuid-fix', ?)",
+        (model_plist,),
+    )
+    seed_fn(conn, entities)
+    # bump Z_MAX to current MAX(Z_PK) per entity (mirrors what Core Data does)
+    for name in entities:
+        table = "Z" + name.upper()
+        actual = conn.execute(f"SELECT COALESCE(MAX(Z_PK),0) FROM {table}").fetchone()[0]
+        conn.execute(
+            "UPDATE Z_PRIMARYKEY SET Z_MAX = ? WHERE Z_NAME = ?", (actual, name)
+        )
+
+
+def _ios_add_chat(conn, ent, contact_jid, name=None) -> int:
+    cur = conn.execute(
+        "INSERT INTO ZWACHATSESSION (Z_ENT, Z_OPT, ZCONTACTJID, ZSESSIONTYPE, "
+        "ZPARTNERNAME, ZMESSAGECOUNTER) VALUES (?, 1, ?, 0, ?, 0)",
+        (ent, contact_jid, name),
+    )
+    return cur.lastrowid
+
+
+def _ios_add_msg(
+    conn,
+    ent,
+    chat_pk,
+    is_from_me,
+    stanza_id,
+    text,
+    *,
+    date: float = 700_000_000.0,
+    msg_type: int = 0,
+) -> int:
+    cur = conn.execute(
+        "INSERT INTO ZWAMESSAGE (Z_ENT, Z_OPT, ZCHATSESSION, ZISFROMME, ZSTANZAID, "
+        "ZMESSAGEDATE, ZMESSAGETYPE, ZTEXT) VALUES (?, 1, ?, ?, ?, ?, ?, ?)",
+        (ent, chat_pk, is_from_me, stanza_id, date, msg_type, text),
+    )
+    return cur.lastrowid
+
+
+def _ios_add_media(conn, ent, msg_pk, path: str, size: int) -> int:
+    cur = conn.execute(
+        "INSERT INTO ZWAMEDIAITEM (Z_ENT, Z_OPT, ZMESSAGE, ZMEDIALOCALPATH, ZFILESIZE) "
+        "VALUES (?, 1, ?, ?, ?)",
+        (ent, msg_pk, path, size),
+    )
+    media_pk = cur.lastrowid
+    conn.execute(
+        "UPDATE ZWAMESSAGE SET ZMEDIAITEM = ? WHERE Z_PK = ?", (media_pk, msg_pk)
+    )
+    return media_pk
+
+
+def _ios_add_msginfo(conn, ent, msg_pk, blob: bytes) -> int:
+    cur = conn.execute(
+        "INSERT INTO ZWAMESSAGEINFO (Z_ENT, Z_OPT, ZMESSAGE, ZRECEIPTINFO) "
+        "VALUES (?, 1, ?, ?)",
+        (ent, msg_pk, blob),
+    )
+    return cur.lastrowid
+
+
+def _seed_ios_a(conn, ent: dict[str, int]) -> None:
+    chat_alice = _ios_add_chat(conn, ent["WAChatSession"], "111@s.whatsapp.net", "Alice")
+    chat_bob = _ios_add_chat(conn, ent["WAChatSession"], "222@s.whatsapp.net", "Bob")
+    m1 = _ios_add_msg(
+        conn, ent["WAMessage"], chat_alice, 0, "STANZA_A1",
+        "Hi from Alice (A)", date=700_000_100.0,
+    )
+    _ios_add_msg(
+        conn, ent["WAMessage"], chat_alice, 1, "STANZA_A2",
+        "Reply (A)", date=700_000_200.0,
+    )
+    m3 = _ios_add_msg(
+        conn, ent["WAMessage"], chat_bob, 0, "STANZA_B1",
+        "Bob hi (A)", date=700_000_300.0,
+    )
+    _ios_add_media(conn, ent["WAMediaItem"], m3, "/Library/Media/img-A.jpg", 1024)
+    _ios_add_msginfo(conn, ent["WAMessageInfo"], m1, b"receipt-A1")
+
+
+def _seed_ios_b(conn, ent: dict[str, int]) -> None:
+    # Different Z_PK ordering, different Z_ENT ids.
+    chat_bob = _ios_add_chat(conn, ent["WAChatSession"], "222@s.whatsapp.net", "Bob")
+    chat_carol = _ios_add_chat(conn, ent["WAChatSession"], "333@s.whatsapp.net", "Carol")
+    # STANZA_B1 overlaps with A's. STANZA_B2 is new in same chat.
+    _ios_add_msg(
+        conn, ent["WAMessage"], chat_bob, 0, "STANZA_B1",
+        "Bob hi (B copy, ignored)", date=700_000_300.0,
+    )
+    m_b2 = _ios_add_msg(
+        conn, ent["WAMessage"], chat_bob, 1, "STANZA_B2",
+        "New from me to Bob (B)", date=700_000_400.0,
+    )
+    m_c1 = _ios_add_msg(
+        conn, ent["WAMessage"], chat_carol, 0, "STANZA_C1",
+        "From Carol (B)", date=700_000_500.0,
+    )
+    _ios_add_media(
+        conn, ent["WAMediaItem"], m_c1, "/Library/Media/carol.jpg", 4096
+    )
+    _ios_add_msginfo(conn, ent["WAMessageInfo"], m_b2, b"receipt-B2")

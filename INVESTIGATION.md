@@ -106,16 +106,49 @@ build) plus index maintenance on the destination, not Python overhead.
 
 ## What the merger does NOT try to do
 
-- **Reconcile media files.** The merger updates `message_media.file_path` but
-  doesn't move blobs on disk. Operator copies `/Media/` from B alongside.
-- **Cross-platform merge.** iOS `ChatStorage.sqlite` has a different schema
-  (`ZWAMESSAGE.ZSTANZAID`, `Z_PK`, etc.). Listed as future work.
+- **Reconcile media files.** The merger updates the media-row paths
+  (`message_media.file_path` on Android, `ZWAMEDIAITEM.ZMEDIALOCALPATH` on
+  iOS) and the inverse references, but does not copy the underlying image /
+  video / audio blobs on disk. The operator must copy B's `Media/`
+  directory alongside the merged DB. On iOS, iMazing's backup editor
+  handles the `Manifest.db` rewrite for the file copies.
+- **Cross-platform merge (Android ↔ iOS).** Schemas and message-type enums
+  differ enough that this is a separate project.
 - **Edit existing rows in A.** Default mode is strict-additive: rows that
   already exist in A are left alone. A `--prefer-newer` flag updates
   destination fields with non-null source fields where the source's
-  `received_timestamp` is newer.
-- **Re-encrypt the result.** Output is plaintext `msgstore.db`. The user can
-  re-encrypt with `wa-crypt-tools` if they want to restore to a device.
+  `received_timestamp` is newer (Android only).
+- **Re-encrypt the result.** Output is plaintext `msgstore.db` /
+  `ChatStorage.sqlite`. Use `wa-crypt-tools` (Android) or iMazing (iOS) for
+  re-injection.
+
+## iOS (Core Data) adapter
+
+The iOS merger handles the `ChatStorage.sqlite` layout: `ZWAMESSAGE`,
+`ZWACHATSESSION`, `ZWAMEDIAITEM`, `ZWAGROUPMEMBER`, plus auto-discovered
+satellite tables (`ZWAMESSAGEINFO`, `ZWAVCARDMENTION`, …). Cross-version
+merges are supported (`--allow-model-hash-mismatch`); A must be the newer
+WhatsApp build because the merged file inherits A's Core Data model.
+
+Core-Data-specific responsibilities the merger takes on:
+
+1. **Z_ENT remapping** — different WhatsApp versions assign different
+   integer entity ids; we join `Z_PRIMARYKEY` on `Z_NAME` to translate.
+2. **Z_PRIMARYKEY.Z_MAX bumps** — after every insert, set `Z_MAX` to the
+   actual `MAX(Z_PK)` per touched entity, otherwise Core Data hands out
+   colliding `Z_PK` values on the next save.
+3. **Inverse 1-to-1 references** — `ZWAMEDIAITEM.ZMESSAGE` is set on
+   insert; the matching `ZWAMESSAGE.ZMEDIAITEM` is filled in a second pass.
+4. **Denormalized chat fields** — `ZLASTMESSAGE`, `ZLASTMESSAGEDATE`, and
+   `ZMESSAGECOUNTER` are recomputed per chat from the actual message rows.
+5. **WAL checkpoint** — both stores' `-wal` sidecars are folded into the
+   main file before `ATTACH`.
+6. **Post-merge integrity sweep** — verifies `Z_MAX >= MAX(Z_PK)` per
+   entity and that media / message foreign keys resolve.
+
+Restoration is delegated to a tool like iMazing, which rewrites
+`Manifest.db` and re-encrypts the iTunes backup with the user's backup
+password. The merger only produces a clean `ChatStorage.sqlite`.
 
 ## Risk notes
 

@@ -30,7 +30,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .schema import (
-    SchemaFlavor,
     column_intersection,
     detect_flavor,
     has_table,
@@ -53,6 +52,11 @@ class MergeReport:
     satellite_rows_inserted: dict[str, int] = field(default_factory=dict)
     elapsed_seconds: float = 0.0
     warnings: list[str] = field(default_factory=list)
+    # iOS-specific
+    ios_model_hashes_match: bool | None = None
+    ios_entity_id_remaps: dict[str, tuple[int, int]] = field(default_factory=dict)
+    ios_z_max_bumps: dict[str, tuple[int, int]] = field(default_factory=dict)
+    ios_integrity_failures: list[str] = field(default_factory=list)
 
 
 def _set_perf_pragmas(conn: sqlite3.Connection) -> None:
@@ -71,16 +75,26 @@ def merge_databases(
     out: os.PathLike[str] | str,
     *,
     prefer_newer: bool = False,
+    allow_model_hash_mismatch: bool = False,
 ) -> MergeReport:
     """Merge ``db_b`` into a copy of ``db_a``, write the result to ``out``.
 
     Returns a :class:`MergeReport` summarizing what changed. ``db_a`` and
     ``db_b`` are opened read-only — only the copy at ``out`` is modified.
+
+    For iOS (Core Data) backups, ``db_a`` should be the *newer* WhatsApp
+    version's ChatStorage.sqlite — the merge writes into A's model so the
+    resulting file is openable by the device that produced A.
     """
     db_a = Path(db_a)
     db_b = Path(db_b)
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
+
+    # iOS WAL files would otherwise hide rows from a fresh ATTACH; checkpoint
+    # both stores into their main file before we start.
+    _checkpoint_wal(db_a)
+    _checkpoint_wal(db_b)
 
     log.info("Copying %s -> %s as merge base", db_a, out)
     shutil.copyfile(db_a, out)
@@ -94,13 +108,11 @@ def merge_databases(
         conn.execute(f"ATTACH DATABASE '{db_b}' AS src")
 
         flavor_main = detect_flavor(conn)
-        # detect on src by querying its sqlite_master
-        flavor_src = _detect_flavor_attached(conn, "src")
+        flavor_src = detect_flavor(conn, schema="src")
         if flavor_main.name != flavor_src.name:
             raise ValueError(
                 f"Schema flavor mismatch: destination is {flavor_main.name}, "
-                f"source is {flavor_src.name}. Bring both to the same WhatsApp "
-                "version before merging."
+                f"source is {flavor_src.name}. Convert one side first."
             )
         report.flavor = flavor_main.name
 
@@ -108,8 +120,17 @@ def merge_databases(
         try:
             if flavor_main.name == "modern":
                 _merge_modern(conn, report, prefer_newer=prefer_newer)
-            else:
+            elif flavor_main.name == "legacy":
                 _merge_legacy(conn, report, prefer_newer=prefer_newer)
+            elif flavor_main.name == "ios":
+                from .ios import merge_ios
+                merge_ios(
+                    conn,
+                    report,
+                    allow_model_hash_mismatch=allow_model_hash_mismatch,
+                )
+            else:
+                raise AssertionError(flavor_main.name)
             conn.execute("COMMIT")
         except Exception:
             conn.execute("ROLLBACK")
@@ -121,18 +142,19 @@ def merge_databases(
     return report
 
 
-def _detect_flavor_attached(conn: sqlite3.Connection, schema: str) -> SchemaFlavor:
-    tables = {
-        r[0]
-        for r in conn.execute(
-            f"SELECT name FROM \"{schema}\".sqlite_master WHERE type='table'"
-        )
-    }
-    if {"message", "chat", "jid"} <= tables:
-        return SchemaFlavor("modern", "message", "chat", "jid")
-    if "messages" in tables:
-        return SchemaFlavor("legacy", "messages", None, None)
-    raise ValueError(f"Unrecognized schema in {schema!r}")
+def _checkpoint_wal(db: Path) -> None:
+    """Fold any -wal sidecar into the main file so ATTACH sees all rows."""
+    if not db.exists():
+        return
+    try:
+        c = sqlite3.connect(db)
+        try:
+            c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            c.commit()
+        finally:
+            c.close()
+    except sqlite3.DatabaseError as e:
+        log.warning("WAL checkpoint of %s failed: %s", db, e)
 
 
 # ---------------------------------------------------------------------------

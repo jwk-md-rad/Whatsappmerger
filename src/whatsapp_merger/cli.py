@@ -34,7 +34,17 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Where the same message exists in both DBs, replace dest fields "
-            "with source fields when the source has a newer received_timestamp"
+            "with source fields when the source has a newer received_timestamp "
+            "(Android only)"
+        ),
+    )
+    p.add_argument(
+        "--allow-model-hash-mismatch",
+        action="store_true",
+        help=(
+            "iOS only: proceed even if the two ChatStorage.sqlite files come "
+            "from different WhatsApp Core Data model versions. The destination "
+            "(db_a) must be the newer version's file."
         ),
     )
     p.add_argument(
@@ -69,12 +79,17 @@ def main(argv: list[str] | None = None) -> int:
         plain_b = _maybe_decrypt(args.db_b, args.key_b, tmp, "B")
 
         report = merge_databases(
-            plain_a, plain_b, args.output, prefer_newer=args.prefer_newer
+            plain_a,
+            plain_b,
+            args.output,
+            prefer_newer=args.prefer_newer,
+            allow_model_hash_mismatch=args.allow_model_hash_mismatch,
         )
 
     print(f"Merged successfully to {args.output}")
     print(f"  Schema flavor: {report.flavor}")
-    print(f"  JIDs added:           {report.jids_inserted}")
+    if report.flavor != "ios":
+        print(f"  JIDs added:           {report.jids_inserted}")
     print(f"  Chats added:          {report.chats_inserted}")
     print(f"  Messages added:       {report.messages_inserted}")
     print(f"  Messages skipped (dup): {report.messages_skipped_duplicate}")
@@ -82,6 +97,23 @@ def main(argv: list[str] | None = None) -> int:
         print("  Satellite tables:")
         for t, n in sorted(report.satellite_rows_inserted.items()):
             print(f"    {t}: {n}")
+    if report.flavor == "ios":
+        match = report.ios_model_hashes_match
+        print(f"  Core Data model hashes match: {match}")
+        if report.ios_entity_id_remaps:
+            print("  Z_ENT remaps (src -> dst):")
+            for name, (s, d) in sorted(report.ios_entity_id_remaps.items()):
+                print(f"    {name}: {s} -> {d}")
+        if report.ios_z_max_bumps:
+            print("  Z_PRIMARYKEY.Z_MAX bumps:")
+            for name, (old, new) in sorted(report.ios_z_max_bumps.items()):
+                print(f"    {name}: {old} -> {new}")
+        if report.ios_integrity_failures:
+            print("  Integrity failures (REVIEW BEFORE INJECTING):")
+            for f in report.ios_integrity_failures:
+                print(f"    - {f}")
+        else:
+            print("  Integrity checks: OK")
     if report.warnings:
         print("  Warnings:")
         for w in report.warnings:

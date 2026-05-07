@@ -25,17 +25,22 @@ class SchemaFlavor:
     jid_table: str | None  # legacy has no jid table
 
 
-def detect_flavor(conn: sqlite3.Connection) -> SchemaFlavor:
-    tables = {row[0] for row in conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table'"
-    )}
+def detect_flavor(conn: sqlite3.Connection, schema: str = "main") -> SchemaFlavor:
+    tables = {
+        row[0]
+        for row in conn.execute(
+            f"SELECT name FROM \"{schema}\".sqlite_master WHERE type='table'"
+        )
+    }
+    if {"ZWAMESSAGE", "ZWACHATSESSION", "Z_PRIMARYKEY"} <= tables:
+        return SchemaFlavor("ios", "ZWAMESSAGE", "ZWACHATSESSION", None)
     if MODERN_MARKER in tables and "chat" in tables and "jid" in tables:
         return SchemaFlavor("modern", "message", "chat", "jid")
     if LEGACY_MARKER in tables:
         return SchemaFlavor("legacy", "messages", None, None)
     raise ValueError(
-        "Database does not look like a WhatsApp msgstore.db "
-        f"(tables seen: {sorted(tables)[:10]}...)"
+        "Database does not look like a WhatsApp backup "
+        f"(tables seen in {schema!r}: {sorted(tables)[:10]}...)"
     )
 
 

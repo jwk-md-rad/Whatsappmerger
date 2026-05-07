@@ -15,13 +15,13 @@ pip install -e .[crypto]        # adds wa-crypt-tools for crypt12/14/15
 
 ## Use
 
-Plaintext inputs:
+Plaintext Android inputs:
 
 ```bash
 whatsapp-merger A/msgstore.db B/msgstore.db -o merged.db
 ```
 
-Encrypted inputs (key file or 64-character hex key):
+Encrypted Android inputs (key file or 64-character hex key):
 
 ```bash
 whatsapp-merger \
@@ -30,6 +30,22 @@ whatsapp-merger \
     --key-b B/encrypted_backup.key \
     -o merged.db
 ```
+
+iOS inputs (`ChatStorage.sqlite` extracted from each iTunes backup with a tool
+like iMazing). **A must be the newer-version backup**:
+
+```bash
+whatsapp-merger \
+    newer/ChatStorage.sqlite older/ChatStorage.sqlite \
+    -o merged.sqlite \
+    --allow-model-hash-mismatch
+```
+
+For iOS the merger produces only the merged `ChatStorage.sqlite`. Re-injection
+into the iTunes backup (Manifest.db rewrite, re-encryption) is delegated to
+iMazing. Photo/video binaries also have to be copied from B's `Message/Media/`
+into A's via the same tool — the merger handles the database references but
+not the media files themselves.
 
 By default the merger is **additive**: rows already present in A are kept
 unchanged. Pass `--prefer-newer` to overwrite destination fields with source
