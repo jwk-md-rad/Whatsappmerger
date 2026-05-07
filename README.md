@@ -1,66 +1,79 @@
-# whatsapp-merger
+# whatsapp-photos
 
-Merge two large WhatsApp Android `msgstore.db` backups into a single
-deduplicated SQLite database.
+A fully searchable, password-protectable photo archive built from a
+WhatsApp iOS backup.
 
-See [INVESTIGATION.md](INVESTIGATION.md) for the feasibility analysis,
-schema notes, and known limitations.
+Input: an extracted `ChatStorage.sqlite` plus the `Message/Media/` tree
+(both pulled from your iTunes/Finder backup with a tool like iMazing).
+
+Output: one self-contained SQLite database with FTS5 full-text indexes
+plus a small local web viewer with thumbnails, filters, and a lightbox.
 
 ## Install
 
 ```bash
-pip install -e .                # core merger only (works on plaintext .db)
-pip install -e .[crypto]        # adds wa-crypt-tools for crypt12/14/15
+pip install -e .          # core
+pip install -e .[heic]    # add HEIC support (Pillow plug-in)
+pip install -e .[dev]     # tests
 ```
 
-## Use
-
-Plaintext Android inputs:
+## Build the archive
 
 ```bash
-whatsapp-merger A/msgstore.db B/msgstore.db -o merged.db
+wa-photos ingest \
+    /path/to/ChatStorage.sqlite \
+    /path/to/AppDomainGroup-group.net.whatsapp.WhatsApp.shared \
+    -o photos.db
 ```
 
-Encrypted Android inputs (key file or 64-character hex key):
+Pass `--password` to set a viewer password right after ingest, or do it
+later with `wa-photos password set photos.db`.
+
+The ingester skips rows whose underlying file is missing on disk or isn't
+a recognised image format. It logs counts in the report.
+
+## Browse
 
 ```bash
-whatsapp-merger \
-    A/msgstore.db.crypt15 B/msgstore.db.crypt15 \
-    --key-a A/encrypted_backup.key \
-    --key-b B/encrypted_backup.key \
-    -o merged.db
+wa-photos serve photos.db                 # http://127.0.0.1:8765/
+wa-photos serve photos.db --port 9000
 ```
 
-iOS inputs (`ChatStorage.sqlite` extracted from each iTunes backup with a tool
-like iMazing). **A must be the newer-version backup**:
+If a password is set, the browser prompts via HTTP Basic Auth (any
+username, the password you set).
+
+## Search from the CLI
 
 ```bash
-whatsapp-merger \
-    newer/ChatStorage.sqlite older/ChatStorage.sqlite \
-    -o merged.sqlite \
-    --allow-model-hash-mismatch
+wa-photos search photos.db "pizza"
+wa-photos search photos.db --sender 555@s.whatsapp.net --since 2024-01-01
+wa-photos search photos.db --json | jq '.[].caption'
 ```
 
-For iOS the merger produces only the merged `ChatStorage.sqlite`. Re-injection
-into the iTunes backup (Manifest.db rewrite, re-encryption) is delegated to
-iMazing. Photo/video binaries also have to be copied from B's `Message/Media/`
-into A's via the same tool — the merger handles the database references but
-not the media files themselves.
+## Password management
 
-By default the merger is **additive**: rows already present in A are kept
-unchanged. Pass `--prefer-newer` to overwrite destination fields with source
-fields when the source row has a newer `received_timestamp`.
+```bash
+wa-photos password status photos.db   # set | not set
+wa-photos password set photos.db      # set or change
+wa-photos password clear photos.db    # remove protection
+```
 
-## How it works
+The password is stored as a PBKDF2-HMAC-SHA256 hash with a random
+per-database salt. It gates **web access**, not at-rest reading of the
+`.db` file — anyone with read access to the file can still query it
+directly via SQLite. For at-rest encryption use SQLCipher or filesystem
+encryption underneath.
 
-The merger opens A as the destination, `ATTACH`es B as `src`, and copies in
-dependency order: `jid` → `chat` → `message` → satellite tables
-(`message_media`, `message_text`, …, `group_participant_user`). Cross-database
-ID remapping is built in temp tables so very large backups stay inside
-SQLite's streaming query path. Deduplication uses the schema's natural keys:
+## Search axes
 
-- modern: `(chat.jid_raw_string, message.from_me, message.key_id, sender.jid_raw_string)`
-- legacy: `(messages.key_remote_jid, messages.key_from_me, messages.key_id)`
+- **Free-text** over caption, sender name, chat name, filename (FTS5,
+  `unicode61`, accent-folded). Highlights are returned as snippets.
+- **Filters**: chat, sender, group/1-on-1, from-me, date range.
+- **Order**: newest, oldest, or relevance (when a query is given).
+
+OCR of text inside photos and visual / face similarity search are not
+in scope for this version — they need bigger dependencies (Tesseract,
+CLIP) and were the explicit "no" in the scoping pass.
 
 ## Test
 
@@ -68,7 +81,8 @@ SQLite's streaming query path. Deduplication uses the schema's natural keys:
 pytest
 ```
 
-The tests build synthetic msgstore fixtures (no real WhatsApp data needed)
-and exercise dedup, ID remapping, satellite-table preservation, the
-quoted-message self-reference second pass, prefer-newer overwrite, and
-legacy-schema merging.
+24 tests covering ingest (skip-missing, metadata extraction, idempotency,
+SHA-256, FTS build), search (text, sender, chat, date range, count,
+sanitizer), auth (round-trip, change, clear, empty rejection), and the
+web layer (index render, search/photo/thumb endpoints, chat & sender
+listings, Basic Auth on/off).

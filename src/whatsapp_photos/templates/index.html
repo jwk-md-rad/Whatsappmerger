@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ title }}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>{{ title }}</h1>
+  <form id="filters">
+    <input type="search" name="q" placeholder="Search captions, sender, chat, filename"
+           autocomplete="off" autofocus>
+    <select name="chat_id"><option value="">All chats</option></select>
+    <select name="sender"><option value="">All senders</option></select>
+    <input type="date" name="since">
+    <input type="date" name="until">
+    <select name="order">
+      <option value="newest">Newest first</option>
+      <option value="oldest">Oldest first</option>
+      <option value="relevance">Relevance</option>
+    </select>
+    <button type="submit">Search</button>
+  </form>
+  <div id="status"></div>
+</header>
+<main id="grid"></main>
+<dialog id="lightbox">
+  <button id="close-lb" aria-label="Close">&times;</button>
+  <img id="full">
+  <div id="meta"></div>
+</dialog>
+<script src="/static/app.js" defer></script>
+</body>
+</html>
