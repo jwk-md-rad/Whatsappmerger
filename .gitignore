@@ -9,8 +9,14 @@ dist/
 *.egg-info/
 *.db
 *.db-journal
+*.sqlite
+*.sqlite-journal
+*.thumbs/
 *.crypt12
 *.crypt14
 *.crypt15
+ChatStorage*
+Message/
+Media/
 .coverage
 htmlcov/
