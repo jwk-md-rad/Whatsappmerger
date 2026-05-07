@@ -9,6 +9,18 @@ Input: an extracted `ChatStorage.sqlite` plus the `Message/Media/` tree
 Output: one self-contained SQLite database with FTS5 full-text indexes
 plus a small local web viewer with thumbnails, filters, and a lightbox.
 
+## Try it out (no real data needed)
+
+```bash
+pip install -e .
+wa-photos demo
+```
+
+Builds a synthetic 12-photo / 5-chat archive under
+`~/.cache/whatsapp_photos/demo/` and starts the viewer at
+`http://127.0.0.1:8765/`. Useful as a UI preview before you've extracted
+your real backup, and as a smoke test of the install.
+
 ## End-to-end walkthrough
 
 If you're starting from scratch — iPhone in hand, no archive yet — read

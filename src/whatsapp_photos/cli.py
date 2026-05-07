@@ -56,6 +56,18 @@ def _parser() -> argparse.ArgumentParser:
     srv.add_argument("--host", default="127.0.0.1")
     srv.add_argument("--port", type=int, default=8765)
 
+    dem = sub.add_parser(
+        "demo",
+        help="Build a synthetic archive and open the viewer (no real backup needed)",
+    )
+    dem.add_argument("--host", default="127.0.0.1")
+    dem.add_argument("--port", type=int, default=8765)
+    dem.add_argument(
+        "--cache-dir",
+        default=None,
+        help="Where to put the demo data (default: ~/.cache/whatsapp_photos/demo)",
+    )
+
     pw = sub.add_parser("password", help="Manage the web-viewer password")
     pw_sub = pw.add_subparsers(dest="pw_cmd", required=True)
     pw_set = pw_sub.add_parser("set", help="Set or change the password")
@@ -90,6 +102,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_ingest(args)
     if args.cmd == "serve":
         return _cmd_serve(args)
+    if args.cmd == "demo":
+        return _cmd_demo(args)
     if args.cmd == "password":
         return _cmd_password(args)
     if args.cmd == "search":
@@ -127,26 +141,44 @@ def _cmd_ingest(args) -> int:
 
 
 def _cmd_serve(args) -> int:
+    return _serve(Path(args.db), host=args.host, port=args.port)
+
+
+def _cmd_demo(args) -> int:
+    from . import demo as demo_mod
+    from .ingest import ingest
+
+    cache_dir = Path(args.cache_dir) if args.cache_dir else _default_demo_dir()
+    print(f"Building demo data under {cache_dir} ...")
+    chat_db, media_root = demo_mod.build_demo_fixture(cache_dir)
+    photos_db = cache_dir / "photos.db"
+    report = ingest(chat_db, media_root, photos_db)
+    print(
+        f"Built {report.photos_inserted} demo photos across "
+        f"{report.chats_inserted} chats."
+    )
+    print()
+    return _serve(photos_db, host=args.host, port=args.port)
+
+
+def _serve(db_path: Path, *, host: str, port: int) -> int:
     import uvicorn
 
     from . import netinfo
     from .web import create_app
 
-    app = create_app(Path(args.db))
-    print(f"Serving photo archive on {netinfo.url_for(args.host, args.port)}")
-
-    if args.host in {"0.0.0.0", "::", ""}:
-        # Bound to all interfaces — surface URLs the user can actually paste
-        # into a phone browser.
+    app = create_app(db_path)
+    print(f"Serving photo archive on {netinfo.url_for(host, port)}")
+    if host in {"0.0.0.0", "::", ""}:
         lan = netinfo.primary_lan_ip()
         if lan:
-            print(f"  LAN: {netinfo.url_for(lan, args.port)}")
-        for label, host in netinfo.tailscale_endpoints():
-            print(f"  {label}: {netinfo.url_for(host, args.port)}")
+            print(f"  LAN: {netinfo.url_for(lan, port)}")
+        for label, peer in netinfo.tailscale_endpoints():
+            print(f"  {label}: {netinfo.url_for(peer, port)}")
     else:
         print("  (bound to one interface; pass --host 0.0.0.0 to expose to your LAN/Tailscale)")
 
-    conn = sqlite3.connect(f"file:{args.db}?mode=ro", uri=True)
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
         if auth_mod.has_password(conn):
             print("(Password protection: ON — your browser will prompt for credentials.)")
@@ -154,8 +186,12 @@ def _cmd_serve(args) -> int:
             print("(Password protection: OFF — anyone who can reach this server can read the archive.)")
     finally:
         conn.close()
-    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    uvicorn.run(app, host=host, port=port, log_level="warning")
     return 0
+
+
+def _default_demo_dir() -> Path:
+    return Path.home() / ".cache" / "whatsapp_photos" / "demo"
 
 
 def _cmd_password(args) -> int:

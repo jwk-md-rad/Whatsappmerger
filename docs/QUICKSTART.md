@@ -14,6 +14,21 @@ anywhere else.
 
 ---
 
+## See it before you build it (optional)
+
+If you want to preview the viewer UI before doing any of the iPhone
+extraction, install the tool (Step 3 below) and run:
+
+```
+wa-photos demo
+```
+
+This builds a fake 12-photo archive in `~/.cache/whatsapp_photos/demo/`
+and opens the same viewer you'll use for your real data. When you're
+ready, switch to the real workflow below.
+
+---
+
 ## What you'll need
 
 - A Mac or Windows PC (the "laptop")
