@@ -166,6 +166,49 @@ standard iCloud encryption.
 
 ⚠️ Keep `photos.db` *out* of iCloud — see Step 4.
 
+### Option C — store on an external hard drive
+
+Pick this if your internal drive is tight and you don't want to wait on
+an iCloud upload, or as a staging step before moving to iCloud later
+(see *Migrating C → B* below).
+
+Destination on Mac:
+
+```
+/Volumes/<HDD-name>/wa-extract/
+```
+
+Replace `<HDD-name>` with whatever Finder shows for your drive in the
+sidebar. On Windows it's the drive letter, e.g. `E:\wa-extract\`.
+
+Requirements:
+
+- The drive must be formatted as **APFS** or **Mac OS Extended (HFS+)**
+  on Mac, or **NTFS** on Windows. **FAT32 won't work** (4 GB
+  per-file limit). exFAT works in a pinch but APFS is safer with the
+  many small `@s.whatsapp.net` folders.
+- The drive must be **plugged in** during `wa-photos ingest` (Step 4)
+  *and* during every `wa-photos serve` session (Step 6). Unplug it and
+  the viewer can't load photos until you plug it back in.
+- Keep `photos.db` itself on your **internal** disk (`~/photos.db`),
+  not on the HDD — otherwise the server crashes the moment the drive
+  ejects.
+
+#### Migrating C → B (HDD → iCloud) later
+
+Useful if you wanted to test everything locally first, then move the
+library to iCloud for partner-sharing or cross-device access:
+
+1. In Finder, drag `wa-extract/` from the HDD into `iCloud Drive` in
+   the sidebar. Wait until the upload finishes (Finder shows a cloud
+   icon next to each file — fully uploaded files lose the icon).
+2. Re-run the `wa-photos ingest` command from Step 4, but with the
+   **iCloud paths** (Option B). The old `photos.db` is overwritten
+   with paths pointing at the iCloud copy. Takes ~1 minute — only
+   re-indexing, not re-uploading.
+3. Once you've verified the viewer works against iCloud, you can
+   delete `wa-extract/` from the HDD.
+
 ---
 
 ## Step 3 — Install the photo archive tool
@@ -200,7 +243,7 @@ shell needs to re-read where commands live.
 ## Step 4 — Build the searchable archive
 
 Substitute the destination folder you chose in Step 2 for `<wa-extract>`
-below. There are two common forms.
+below. Pick the form that matches the option you used.
 
 **If you chose Option A (extract on the laptop):**
 
@@ -221,6 +264,20 @@ wa-photos ingest \
   -o ~/photos.db \
   --password
 ```
+
+**If you chose Option C (extract on an external HDD):**
+
+```
+wa-photos ingest \
+  /Volumes/<HDD-name>/wa-extract/ChatStorage.sqlite \
+  /Volumes/<HDD-name>/wa-extract \
+  -o ~/photos.db \
+  --password
+```
+
+Make sure the HDD is plugged in before running this — and stays plugged
+in whenever you later run `wa-photos serve`. The `photos.db` output goes
+to your **internal** home directory, never on the HDD itself.
 
 ⚠️ **Keep `photos.db` local — do not place it inside iCloud Drive.**
 SQLite databases and cloud sync are a bad combination: if iCloud syncs a
