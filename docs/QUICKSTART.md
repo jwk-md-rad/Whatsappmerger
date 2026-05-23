@@ -6,11 +6,11 @@ phone, anywhere in the world".
 
 **Time:** ~30–45 minutes the first time. Re-builds later take ~5 minutes.
 
-**You'll end with:** one self-contained, password-protected SQLite
-archive on your laptop, a small web viewer with a search box and
-thumbnails, and an encrypted Tailscale connection so the same viewer
-opens cleanly on your iPhone whether you're at home, on cellular, or
-anywhere else.
+**You'll end with:** one password-protected searchable archive of every
+photo in your WhatsApp history, a small web viewer with thumbnails and
+filters, an encrypted Tailscale connection so it opens cleanly on your
+iPhone from anywhere, and — optionally — shared access for one other
+trusted person (e.g. your partner) on their own devices.
 
 ---
 
@@ -83,6 +83,26 @@ wa-extract/
 Both `ChatStorage.sqlite` and the `Message/` tree must be present. The
 ingest tool needs both in the same parent directory.
 
+### Optional — store the extract in iCloud Drive
+
+If your laptop's internal drive is tight, point the iMazing export at an
+iCloud Drive folder instead. On a Mac that path is:
+
+```
+~/Library/Mobile Documents/com~apple~CloudDocs/wa-extract/
+```
+
+(In Finder this shows up as **iCloud Drive → wa-extract**.) Apple's
+"Optimize Mac Storage" feature then keeps rarely-used photos cloud-only
+and only downloads them when you open them in the viewer.
+
+**Strongly recommended if you do this:** turn on **Advanced Data
+Protection** on your iPhone (Settings → your name → iCloud → Advanced
+Data Protection). That makes iCloud Drive end-to-end-encrypted; Apple
+itself can no longer read your photos.
+
+⚠️ Keep `photos.db` *out* of iCloud — see Step 4.
+
 ---
 
 ## Step 3 — Install the photo archive tool
@@ -107,11 +127,28 @@ If you get the version number back, you're ready.
 
 ## Step 4 — Build the searchable archive
 
+If the extract is in your home directory:
+
 ```
 wa-photos ingest ~/wa-extract/ChatStorage.sqlite ~/wa-extract \
-    -o photos.db \
+    -o ~/photos.db \
     --password
 ```
+
+If you used the iCloud Drive variant from Step 2:
+
+```
+wa-photos ingest \
+  "$HOME/Library/Mobile Documents/com~apple~CloudDocs/wa-extract/ChatStorage.sqlite" \
+  "$HOME/Library/Mobile Documents/com~apple~CloudDocs/wa-extract" \
+  -o ~/photos.db \
+  --password
+```
+
+⚠️ **Keep `photos.db` local — do not place it inside iCloud Drive.**
+SQLite databases and cloud sync are a bad combination: if iCloud
+syncs a file mid-write, the database can corrupt. The photos live in
+iCloud; the small (~MB) database stays in your home directory.
 
 When prompted, enter and confirm a strong password. This is the password
 your phone's browser will ask for later.
@@ -185,6 +222,43 @@ Bookmark the URL so you don't have to re-type it.
 
 ---
 
+## Step 8 — Share the archive with a partner or family member
+
+You can let one other trusted person (your partner, a sibling) reach the
+same archive from their own laptop or phone, without exposing anything
+to the wider internet.
+
+### One-time setup on your side
+
+1. Open `https://login.tailscale.com/admin/users` while logged into
+   your Tailscale account.
+2. Click **Invite Users** and enter the other person's email address.
+3. They receive an invitation email.
+
+### One-time setup on their side
+
+4. They open the invitation, create or sign into a Tailscale account,
+   and install Tailscale on their laptop (and optionally their phone)
+   from `tailscale.com/download`.
+5. Once Tailscale is running on their device, it is part of your
+   shared tailnet.
+
+### Using it
+
+6. They open the same MagicDNS URL from Step 6 in their browser, e.g.
+   `http://yourlaptop.tail-abcd.ts.net:8765/`.
+7. Their browser prompts for credentials. They use the password you
+   set in Step 4. (There is one password per archive; you both use it.)
+
+**Constraints that still apply:**
+
+- Your laptop must be on and `wa-photos serve` must be running. If
+  it is off, neither of you can reach the archive.
+- One password gates the whole archive. There are no per-user
+  accounts — fine for a couple, less suitable for larger groups.
+
+---
+
 ## Tips & troubleshooting
 
 - **MagicDNS URL doesn't resolve.** Open the Tailscale admin console
@@ -205,16 +279,26 @@ Bookmark the URL so you don't have to re-type it.
 - **Stop the server.** Press *Ctrl-C* in the terminal where it's
   running. Tailscale stays up; restart with the same command later.
 
-- **Want to share with another person.** Don't — the archive contains
-  every photo you've ever exchanged on WhatsApp. Treat it like the
-  sensitive personal data it is.
+- **Share with a partner.** See Step 8. Never make the archive
+  reachable on the open internet — it contains every photo you've ever
+  exchanged on WhatsApp.
+
+- **iCloud sync is slow on first access.** With "Optimize Mac Storage"
+  on, a photo that hasn't been opened in a long time may need to
+  download from iCloud before it appears in the viewer. This is normal
+  — once downloaded, subsequent opens are instant. Tailscale and
+  password-prompt latency are unaffected.
 
 ---
 
 ## What stays private
 
-- The archive (`photos.db`) and the original photos stay on your laptop.
-  Nothing is uploaded.
+- The original photos live wherever you put them — on your laptop's
+  disk, or in your iCloud Drive folder. Nothing is uploaded *by this
+  tool*; if you chose the iCloud variant, Apple's sync handles those
+  files under whatever iCloud settings you have. With Advanced Data
+  Protection enabled, even iCloud Drive becomes end-to-end-encrypted.
+- `photos.db` stays local on your laptop and is never synced anywhere.
 - The password is stored as a PBKDF2-HMAC-SHA256 hash with a per-archive
   random salt — not as plaintext.
 - Tailscale traffic is end-to-end encrypted via WireGuard. Your password
