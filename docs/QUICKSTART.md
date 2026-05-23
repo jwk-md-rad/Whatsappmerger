@@ -82,15 +82,32 @@ extraction (Step 2), not a fresh backup.
 
 ## Step 2 — Extract WhatsApp data with iMazing
 
-1. With your iPhone selected in iMazing, click *Apps* (some versions
-   call it *Manage Apps*).
-2. Find **WhatsApp Messenger** in the list.
-3. Right-click it → *Extract App Data*. (Some versions use *Export App
-   Data* in the toolbar — same thing.)
-4. Choose a destination folder. The next subsection covers the two
+⚠️ **Don't confuse this with the WhatsApp viewer's Export button.** If
+you open *Data → WhatsApp* in iMazing you'll see a chat browser with an
+*Export* dropdown offering PDF / Excel / CSV / Text / RSMF / Attachments.
+**None of those are what we need** — they produce formatted reports, not
+the raw backup files. Close that view and follow the steps below.
+
+1. With your iPhone selected, go to the **Overview** screen.
+2. In the *Quick Actions* panel on the right, click **Manage Apps**
+   (in older versions this lives in the left sidebar as **Apps**).
+3. Find **WhatsApp Messenger** in the app list.
+4. **Right-click** it → **Extract App** (older versions label this
+   *Extract App Data* — same feature). This menu item is the one we
+   need — it's distinct from the *Export* button in the WhatsApp
+   viewer. The right-click menu also contains *Copy to Mac*, *Restore
+   App*, *Uninstall App*, etc.; ignore those.
+5. When asked, make sure *Include Media* / *Include Documents* are
+   **checked** — otherwise you get the database without the photos.
+6. Choose a destination folder. The next subsection covers the two
    sensible options.
-5. Wait for export. This is the slowest step — five to thirty minutes
+7. Wait for export. This is the slowest step — five to thirty minutes
    depending on chat-history size and how many photos you have.
+
+> **Note:** *Extract App Data* requires a **paid iMazing license**. The
+> free trial only enables the viewer-style exports from *Data →
+> WhatsApp*, which is why those are the only ones visible if you haven't
+> bought a license yet.
 
 When it finishes, your destination folder will contain something like:
 
