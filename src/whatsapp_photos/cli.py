@@ -25,7 +25,7 @@ from pathlib import Path
 
 from . import __version__
 from . import auth as auth_mod
-from .ingest import IngestOptions, ingest
+from .ingest import IngestOptions, ingest, _ro_uri
 from .search import SearchFilters, search_messages
 
 
@@ -191,7 +191,7 @@ def _serve(db_path: Path, *, host: str, port: int) -> int:
     else:
         print("  (bound to one interface; pass --host 0.0.0.0 to expose to your LAN/Tailscale)")
 
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn = sqlite3.connect(_ro_uri(db_path), uri=True)
     try:
         if auth_mod.has_password(conn):
             print("(Password protection: ON — your browser will prompt for credentials.)")
@@ -253,7 +253,7 @@ def _set_password_interactive_with_conn(conn: sqlite3.Connection) -> None:
 
 
 def _cmd_search(args) -> int:
-    conn = sqlite3.connect(f"file:{args.db}?mode=ro", uri=True)
+    conn = sqlite3.connect(_ro_uri(args.db), uri=True)
     try:
         filters = SearchFilters(
             query=args.query,

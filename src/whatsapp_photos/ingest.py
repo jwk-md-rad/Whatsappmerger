@@ -105,6 +105,17 @@ class IngestReport:
         return self.images_inserted
 
 
+def _ro_uri(db_path: os.PathLike[str] | str) -> str:
+    """Build a ``file:`` URI for read-only SQLite open.
+
+    ``Path.as_uri()`` percent-encodes spaces and other characters that
+    macOS / Windows users routinely have in their paths (think
+    ``Mobile Documents``, ``Whatsapp Jar``). Plain f-string interpolation
+    breaks SQLite's URI parser on those paths.
+    """
+    return f"{Path(db_path).resolve().as_uri()}?mode=ro"
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
@@ -135,7 +146,7 @@ def ingest(
     if out_db.exists():
         out_db.unlink()
 
-    src = sqlite3.connect(f"file:{chat_db}?mode=ro", uri=True)
+    src = sqlite3.connect(_ro_uri(chat_db), uri=True)
     dst = sqlite3.connect(out_db)
     try:
         dst.execute("PRAGMA journal_mode = MEMORY")

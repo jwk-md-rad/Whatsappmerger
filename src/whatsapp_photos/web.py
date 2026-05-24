@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from . import auth as auth_mod
+from .ingest import _ro_uri
 from .search import (
     SearchFilters,
     _row_to_hit,
@@ -53,7 +54,7 @@ def create_app(db_path: Path) -> FastAPI:
     basic = HTTPBasic(auto_error=False)
 
     def get_conn() -> sqlite3.Connection:
-        c = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        c = sqlite3.connect(_ro_uri(db_path), uri=True)
         c.row_factory = sqlite3.Row
         return c
 

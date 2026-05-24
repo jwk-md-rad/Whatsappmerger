@@ -108,6 +108,16 @@ def test_ingest_sha256_optional(tmp_path: Path) -> None:
     assert all(len(r[0]) == 64 for r in sha_rows)
 
 
+def test_ingest_path_with_spaces(tmp_path: Path) -> None:
+    """SQLite file:URIs break on raw spaces; we should percent-encode them."""
+    spaced = tmp_path / "Mobile Documents" / "Whatsapp Jar"
+    spaced.mkdir(parents=True)
+    chat_db, media_root = build_fixture(spaced)
+    out = spaced / "archive.db"
+    report = ingest(chat_db, media_root, out)
+    assert report.images_inserted == 3
+
+
 def test_ingest_fts_index_built(tmp_path: Path) -> None:
     chat_db, media_root = build_fixture(tmp_path)
     out = tmp_path / "archive.db"
