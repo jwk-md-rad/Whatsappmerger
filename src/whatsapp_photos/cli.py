@@ -26,13 +26,13 @@ from pathlib import Path
 from . import __version__
 from . import auth as auth_mod
 from .ingest import IngestOptions, ingest
-from .search import SearchFilters, search_photos
+from .search import SearchFilters, search_messages
 
 
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="wa-photos",
-        description="Build and search a database of photos from a WhatsApp iOS backup.",
+        description="Build and search a searchable archive of messages and photos from a WhatsApp iOS backup.",
     )
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     p.add_argument("-v", "--verbose", action="store_true")
@@ -44,6 +44,8 @@ def _parser() -> argparse.ArgumentParser:
     ing.add_argument("-o", "--output", required=True, help="Output photos.db path")
     ing.add_argument("--include-stickers", action="store_true")
     ing.add_argument("--no-gifs", action="store_true", help="Skip animated GIFs")
+    ing.add_argument("--no-text", action="store_true",
+                     help="Index only image messages, skip text-only messages")
     ing.add_argument("--sha256", action="store_true", help="Compute SHA-256 per file (slower)")
     ing.add_argument(
         "--password",
@@ -82,6 +84,7 @@ def _parser() -> argparse.ArgumentParser:
     s.add_argument("query", nargs="?", default=None)
     s.add_argument("--chat-id", type=int)
     s.add_argument("--sender")
+    s.add_argument("--type", choices=["text", "image"], help="Limit to text or image messages")
     s.add_argument("--since", help="YYYY-MM-DD")
     s.add_argument("--until", help="YYYY-MM-DD")
     s.add_argument("--limit", type=int, default=20)
@@ -115,12 +118,14 @@ def _cmd_ingest(args) -> int:
     opts = IngestOptions(
         include_stickers=args.include_stickers,
         include_gifs=not args.no_gifs,
+        include_text=not args.no_text,
         compute_sha256=args.sha256,
     )
     report = ingest(args.chat_db, args.media_root, args.output, options=opts)
 
     print(f"Ingested -> {args.output}")
-    print(f"  Photos inserted:        {report.photos_inserted}")
+    print(f"  Images inserted:        {report.images_inserted:,}")
+    print(f"  Text messages inserted: {report.texts_inserted:,}")
     print(f"  Chats:                  {report.chats_inserted}")
     print(f"  Skipped (file missing): {report.rows_skipped_missing_file}")
     print(f"  Skipped (not image):    {report.rows_skipped_not_image}")
@@ -154,7 +159,8 @@ def _cmd_demo(args) -> int:
     photos_db = cache_dir / "photos.db"
     report = ingest(chat_db, media_root, photos_db)
     print(
-        f"Built {report.photos_inserted} demo photos across "
+        f"Built {report.images_inserted} demo photos and "
+        f"{report.texts_inserted} text messages across "
         f"{report.chats_inserted} chats."
     )
     print()
@@ -168,7 +174,7 @@ def _serve(db_path: Path, *, host: str, port: int) -> int:
     from .web import create_app
 
     app = create_app(db_path)
-    print(f"Serving photo archive on {netinfo.url_for(host, port)}")
+    print(f"Serving WhatsApp archive on {netinfo.url_for(host, port)}")
     if host in {"0.0.0.0", "::", ""}:
         lan = netinfo.primary_lan_ip()
         if lan:
@@ -246,12 +252,13 @@ def _cmd_search(args) -> int:
             query=args.query,
             chat_id=args.chat_id,
             sender_jid=args.sender,
+            type=args.type,
             since_unix=_date_to_unix(args.since, end=False),
             until_unix=_date_to_unix(args.until, end=True),
             limit=args.limit,
             offset=args.offset,
         )
-        hits = search_photos(conn, filters, order_by="newest")
+        hits = search_messages(conn, filters, order_by="newest")
     finally:
         conn.close()
 
@@ -264,15 +271,16 @@ def _cmd_search(args) -> int:
         return 0
     for h in hits:
         ts = (
-            dt.datetime.utcfromtimestamp(h.taken_at).strftime("%Y-%m-%d %H:%M")
-            if h.taken_at else "?"
+            dt.datetime.utcfromtimestamp(h.sent_at).strftime("%Y-%m-%d %H:%M")
+            if h.sent_at else "?"
         )
         sender = "Me" if h.is_from_me else (h.sender_name or h.sender_jid or "?")
         chat = h.chat_name or h.chat_jid
-        cap = (h.caption or "").replace("\n", " ")
-        if len(cap) > 80:
-            cap = cap[:79] + "…"
-        print(f"#{h.id:<6} {ts}  {sender}  in {chat}  [{h.filename}]  {cap}")
+        body = (h.body or "").replace("\n", " ")
+        if len(body) > 80:
+            body = body[:79] + "…"
+        tag = "[IMG]" if h.type == "image" else "[TXT]"
+        print(f"#{h.id:<6} {ts}  {tag}  {sender}  in {chat}  {body}")
     return 0
 
 
@@ -288,7 +296,8 @@ def _date_to_unix(s: str | None, *, end: bool) -> int | None:
 def _hit_to_dict(h) -> dict:
     return {
         "id": h.id,
-        "taken_at": h.taken_at,
+        "sent_at": h.sent_at,
+        "type": h.type,
         "sender": h.sender_name or h.sender_jid,
         "from_me": h.is_from_me,
         "chat": h.chat_name or h.chat_jid,
@@ -297,7 +306,7 @@ def _hit_to_dict(h) -> dict:
         "width": h.width,
         "height": h.height,
         "file_size": h.file_size,
-        "caption": h.caption,
+        "body": h.body,
     }
 
 

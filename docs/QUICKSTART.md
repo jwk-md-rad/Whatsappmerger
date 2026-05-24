@@ -1,30 +1,38 @@
-# WhatsApp Photo Archive — Quickstart
+# WhatsApp Archive — Quickstart
 
 A step-by-step guide that takes you from "I have an iPhone with WhatsApp"
-to "I can search every photo in my chat history from my laptop and my
-phone, anywhere in the world".
+to "I can search every photo and text message in my chat history from
+my laptop and my phone, anywhere in the world".
 
 **Time:**
 
 - ~30–60 minutes of attention the first time.
 - iMazing extraction runs ~5–30 minutes in the background.
 - If you choose the iCloud Drive variant, the upload of a multi-GB
-  photo library happens silently and can take hours to days. **You do
-  not have to wait for that upload before continuing** — Apple keeps
-  the local copy on disk while it uploads.
+  archive happens silently and can take hours to days. **You do not
+  have to wait for that upload before continuing** — Apple keeps the
+  local copy on disk while it uploads.
 - Re-builds after a fresh iPhone backup later take ~5 minutes of
   active work.
 
 **You'll end with:**
 
-- A password-protected searchable archive of every photo in your
-  WhatsApp history, on your own laptop.
-- A small web viewer with thumbnails, captions search, chat and sender
-  filters, and a lightbox.
+- A password-protected searchable archive of every photo *and every
+  text message* in your WhatsApp history, on your own laptop.
+- A small web viewer with thumbnails, full-text search across both
+  message bodies and image captions, chat and sender filters, and a
+  lightbox that handles both photos and text messages.
 - An encrypted Tailscale connection so the viewer opens on your iPhone
   from any network.
 - (Optional) Shared access for one other trusted person — your partner
   — on their own laptop and phone.
+
+> **Scope note:** the archive currently indexes **text and image**
+> messages. Voice notes, videos, and documents are present in the
+> iMazing extract but not yet exposed in the viewer (they're skipped
+> at ingest). For most users this still covers ~95% of useful content;
+> a typical 700k-message library produces a single sub-300-MB SQLite
+> database that searches in milliseconds.
 
 ---
 
@@ -37,10 +45,11 @@ install the tool (Step 3 below) and run:
 wa-photos demo
 ```
 
-This builds a fake 12-photo archive in `~/.cache/whatsapp_photos/demo/`
-and opens the same viewer you'll use for your real data at
-`http://127.0.0.1:8765/`. Press *Ctrl-C* in the terminal to stop it.
-When you're ready, switch to the real workflow below.
+This builds a fake archive (12 photos + 8 text messages) in
+`~/.cache/whatsapp_photos/demo/` and opens the same viewer you'll use
+for your real data at `http://127.0.0.1:8765/`. Press *Ctrl-C* in the
+terminal to stop it. When you're ready, switch to the real workflow
+below.
 
 ---
 
@@ -211,7 +220,7 @@ library to iCloud for partner-sharing or cross-device access:
 
 ---
 
-## Step 3 — Install the photo archive tool
+## Step 3 — Install the archive tool
 
 Open a terminal:
 
@@ -281,8 +290,9 @@ to your **internal** home directory, never on the HDD itself.
 
 ⚠️ **Keep `photos.db` local — do not place it inside iCloud Drive.**
 SQLite databases and cloud sync are a bad combination: if iCloud syncs a
-file mid-write, the database can corrupt. The photos live in iCloud;
-the small (~MB) database stays in your home directory.
+file mid-write, the database can corrupt. The photo files live in
+iCloud (or on your HDD); the small (~MB to a few hundred MB) database
+stays in your home directory.
 
 When prompted, enter and confirm a **strong** password (4+ random words,
 or 12+ characters of mixed case, digits, and symbols). This is the
@@ -293,18 +303,25 @@ The tool prints a summary like:
 
 ```
 Ingested -> /Users/you/photos.db
-  Photos inserted:        4821
-  Chats:                  78
+  Images inserted:        4,821
+  Text messages inserted: 687,234
+  Chats:                  2,203
   Skipped (file missing): 12
-  Skipped (not image):    3
-  Elapsed:                47.21s
+  Skipped (not image):    3,140
+  Elapsed:                412.55s
 ```
 
-A few skipped rows are normal — those are messages whose attachment file
-isn't on disk anymore (e.g. expired view-once media). A skipped count in
-the hundreds or thousands usually means the extract in Step 2 didn't
-include media; re-run with *Include Media* / *Include Documents* checked
-in iMazing.
+- **Images** are messages with attached photos that opened cleanly.
+- **Text messages** are plain chat text (the bulk of any WhatsApp
+  history). Image captions are stored alongside the image and don't
+  count here.
+- **Skipped (not image)** is mostly videos, voice notes, documents and
+  stickers — currently not exposed in the viewer. They're not lost,
+  just not indexed; a future version can pick them up.
+- A few **Skipped (file missing)** rows are normal (expired view-once
+  media). Many usually means the extract in Step 2 didn't include
+  media; re-run with *Include Media* / *Include Documents* checked in
+  iMazing.
 
 ---
 
@@ -340,7 +357,7 @@ wa-photos serve ~/photos.db --host 0.0.0.0
 You'll see a banner like this:
 
 ```
-Serving photo archive on http://0.0.0.0:8765/
+Serving WhatsApp archive on http://0.0.0.0:8765/
   LAN: http://192.168.1.42:8765/
   Tailscale IPv4: http://100.84.17.3:8765/
   Tailscale MagicDNS: http://mylaptop.tail-abcd.ts.net:8765/
@@ -349,8 +366,8 @@ Serving photo archive on http://0.0.0.0:8765/
 
 **Verify on the laptop first** (don't skip — saves debugging on the
 phone): open `http://127.0.0.1:8765/` in your laptop's browser. Enter
-the password. You should see the search page with your photos. If that
-works, the server is healthy.
+the password. You should see the search page with your messages and
+photos. If that works, the server is healthy.
 
 Then copy the **Tailscale MagicDNS** URL — that's the one to use on the
 phone in Step 7 and from anywhere outside the LAN.
@@ -367,8 +384,10 @@ Closing it (or pressing *Ctrl-C*) stops the server.
 2. Open Safari (or Chrome) and paste the MagicDNS URL from Step 6.
 3. iOS prompts for credentials. Username can be anything (the tool
    ignores it). Enter the password you set in Step 4.
-4. You're in. Use the search box, the chat / sender filters, the date
-   range, and tap any thumbnail to view full-size.
+4. You're in. Use the search box (it covers message bodies, image
+   captions, sender and chat names), the chat / sender / type
+   filters, the date range, and tap any card to view it full-size in
+   the lightbox. Use ← / → in the lightbox to walk through results.
 
 Bookmark the URL so you don't have to re-type it. Add it to your home
 screen if you want a one-tap launcher.
@@ -483,6 +502,10 @@ each re-run `wa-photos ingest` locally to refresh your own `photos.db`.
   media file. Re-run the export from Step 2 with *Include Media* /
   *Include Documents* options checked, then re-run `wa-photos ingest`.
 
+- **Search returns only photos, not text.** Check the *Message type*
+  filter in the toolbar — if it's set to "Photos only", switch back
+  to "All types".
+
 - **Forgot the password.** No recovery — the password is hashed.
   Reset with `wa-photos password set ~/photos.db`.
 
@@ -511,13 +534,16 @@ each re-run `wa-photos ingest` locally to refresh your own `photos.db`.
 
 ## What stays private
 
-- **The original photos** live wherever you put them — your laptop's
-  disk, or your iCloud Drive folder. This tool uploads nothing on its
-  own. If you chose Option B (iCloud), Apple's sync handles those
-  files; turn on **Advanced Data Protection** to make even iCloud
-  Drive end-to-end encrypted, so Apple itself cannot read them.
-- **`photos.db`** stays local on every laptop that builds one. It is
-  never synced to iCloud and never uploaded by this tool.
+- **Your original WhatsApp data** (the `wa-extract` folder with the
+  raw `ChatStorage.sqlite` and media files) lives wherever you put it
+  — your laptop's disk, an external HDD, or your iCloud Drive folder.
+  This tool uploads nothing on its own. If you chose Option B
+  (iCloud), Apple's sync handles those files; turn on **Advanced Data
+  Protection** to make even iCloud Drive end-to-end encrypted, so
+  Apple itself cannot read them.
+- **`photos.db`** (the searchable index containing your message text
+  and image metadata) stays local on every laptop that builds one. It
+  is never synced to iCloud and never uploaded by this tool.
 - **The password** is stored as a PBKDF2-HMAC-SHA256 hash with a
   per-archive random salt — never as plaintext.
 - **Tailscale traffic** is end-to-end encrypted via WireGuard between

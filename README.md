@@ -1,13 +1,19 @@
 # whatsapp-photos
 
-A fully searchable, password-protectable photo archive built from a
-WhatsApp iOS backup.
+A fully searchable, password-protectable archive built from a WhatsApp
+iOS backup. Indexes text messages and photos (image captions and bodies
+are both searchable via FTS5).
 
 Input: an extracted `ChatStorage.sqlite` plus the `Message/Media/` tree
 (both pulled from your iTunes/Finder backup with a tool like iMazing).
 
 Output: one self-contained SQLite database with FTS5 full-text indexes
 plus a small local web viewer with thumbnails, filters, and a lightbox.
+
+> Voice notes, video, and document attachments are present in the
+> extract but not yet exposed in the viewer; they're skipped at ingest.
+> A typical 700k-message library produces a sub-300-MB database that
+> searches in milliseconds.
 
 ## Try it out (no real data needed)
 
@@ -16,10 +22,10 @@ pip install -e .
 wa-photos demo
 ```
 
-Builds a synthetic 12-photo / 5-chat archive under
-`~/.cache/whatsapp_photos/demo/` and starts the viewer at
-`http://127.0.0.1:8765/`. Useful as a UI preview before you've extracted
-your real backup, and as a smoke test of the install.
+Builds a synthetic archive (12 photos + 8 text messages across 5 chats)
+under `~/.cache/whatsapp_photos/demo/` and starts the viewer at
+`http://127.0.0.1:8765/`. Useful as a UI preview before you've
+extracted your real backup, and as a smoke test of the install.
 
 ## End-to-end walkthrough
 
@@ -56,8 +62,14 @@ wa-photos ingest \
 Pass `--password` to set a viewer password right after ingest, or do it
 later with `wa-photos password set photos.db`.
 
-The ingester skips rows whose underlying file is missing on disk or isn't
-a recognised image format. It logs counts in the report.
+For each WhatsApp row the ingester does one of:
+- recognised image format on disk → store as an `image` message
+- otherwise non-empty text body → store as a `text` message
+- otherwise (missing file, video, audio, document, sticker without
+  text) → skipped, with a per-reason counter in the report.
+
+Pass `--no-text` to index image messages only (matches the pre-text
+behaviour).
 
 ## Browse
 
@@ -97,8 +109,10 @@ Tailscale and just use the LAN URL the banner prints.
 
 ```bash
 wa-photos search photos.db "pizza"
+wa-photos search photos.db "pizza" --type text     # only text messages
+wa-photos search photos.db "pizza" --type image    # only photos / captions
 wa-photos search photos.db --sender 555@s.whatsapp.net --since 2024-01-01
-wa-photos search photos.db --json | jq '.[].caption'
+wa-photos search photos.db --json | jq '.[].body'
 ```
 
 ## Password management
@@ -117,9 +131,11 @@ encryption underneath.
 
 ## Search axes
 
-- **Free-text** over caption, sender name, chat name, filename (FTS5,
-  `unicode61`, accent-folded). Highlights are returned as snippets.
-- **Filters**: chat, sender, group/1-on-1, from-me, date range.
+- **Free-text** over message body (image captions + text message
+  bodies), sender name, chat name, filename (FTS5, `unicode61`,
+  accent-folded). Highlights are returned as snippets.
+- **Filters**: chat, sender, message type (text / image), group/1-on-1,
+  from-me, date range.
 - **Order**: newest, oldest, or relevance (when a query is given).
 
 OCR of text inside photos and visual / face similarity search are not
@@ -132,8 +148,9 @@ CLIP) and were the explicit "no" in the scoping pass.
 pytest
 ```
 
-24 tests covering ingest (skip-missing, metadata extraction, idempotency,
-SHA-256, FTS build), search (text, sender, chat, date range, count,
-sanitizer), auth (round-trip, change, clear, empty rejection), and the
-web layer (index render, search/photo/thumb endpoints, chat & sender
-listings, Basic Auth on/off).
+40 tests covering ingest (text + image classification, skip-missing,
+metadata extraction, idempotency, SHA-256, FTS build), search (text
+body, caption, sender, chat, date range, type filter, count,
+sanitizer), auth (round-trip, change, clear, empty rejection), and
+the web layer (index render, search/photo/thumb endpoints with text
+vs image hits, chat & sender listings, Basic Auth on/off).
