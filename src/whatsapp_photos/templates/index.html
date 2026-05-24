@@ -48,8 +48,12 @@
 </section>
 <main id="grid"></main>
 <dialog id="lightbox">
-  <button id="close-lb" aria-label="Close">&times;</button>
-  <img id="full">
+  <div class="lb-stage">
+    <button id="close-lb" aria-label="Close">&times;</button>
+    <button class="lb-arrow prev" id="lb-prev" aria-label="Previous">&#8249;</button>
+    <button class="lb-arrow next" id="lb-next" aria-label="Next">&#8250;</button>
+    <img id="full">
+  </div>
   <div id="meta"></div>
 </dialog>
 <script src="/static/app.js" defer></script>

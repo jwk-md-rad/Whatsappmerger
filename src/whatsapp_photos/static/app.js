@@ -22,7 +22,29 @@ let suppressUrlSync = false;
 function fmtDate(unix) {
   if (!unix) return "";
   const d = new Date(unix * 1000);
-  return d.toLocaleString();
+  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+function fmtDateFull(unix) {
+  if (!unix) return "";
+  const d = new Date(unix * 1000);
+  return d.toLocaleString(undefined, {
+    year: "numeric", month: "long", day: "numeric",
+    hour: "numeric", minute: "2-digit",
+  });
+}
+
+function fmtRelDate(unix) {
+  if (!unix) return "";
+  const now = Date.now() / 1000;
+  const diff = now - unix;
+  const day = 86400;
+  if (diff < day) return "today";
+  if (diff < 2 * day) return "yesterday";
+  if (diff < 7 * day) return `${Math.floor(diff / day)} days ago`;
+  if (diff < 30 * day) return `${Math.floor(diff / (7 * day))} weeks ago`;
+  if (diff < 365 * day) return fmtDate(unix);
+  return fmtDate(unix);
 }
 
 function dateToUnix(input) {
@@ -112,7 +134,14 @@ function renderEmptyState() {
   const div = document.createElement("div");
   div.id = "empty-state";
   div.className = "empty-state";
-  div.innerHTML = `No photos match these filters. <a href="#" id="empty-clear">Clear filters</a> and try again.`;
+  div.innerHTML = `
+    <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
+    </svg>
+    <div>No photos match these filters.</div>
+    <div style="margin-top:0.4rem"><a href="#" id="empty-clear">Clear filters</a> and try again.</div>
+  `;
   div.querySelector("#empty-clear").addEventListener("click", (e) => {
     e.preventDefault();
     clearFilters();
@@ -150,7 +179,8 @@ function renderCard(hit, index) {
   info.appendChild(line1);
 
   const line2 = document.createElement("div");
-  line2.textContent = fmtDate(hit.taken_at);
+  line2.textContent = fmtRelDate(hit.taken_at);
+  line2.title = fmtDateFull(hit.taken_at);
   info.appendChild(line2);
 
   if (hit.snippet) {
@@ -218,7 +248,7 @@ function openLightbox(index) {
   currentIndex = index;
   const hit = loadedHits[index];
   fullImg.src = hit.photo_url;
-  const date = fmtDate(hit.taken_at);
+  const date = fmtDateFull(hit.taken_at);
   const fromName = hit.is_from_me ? "Me" : (hit.sender_name || hit.sender_jid || "?");
   const chatName = hit.chat_name || hit.chat_jid;
 
@@ -250,6 +280,12 @@ function openLightbox(index) {
   nav.textContent = `${index + 1} of ${loadedHits.length}${total > loadedHits.length ? ` (${total} total)` : ""}`;
   meta.appendChild(nav);
 
+  // Enable/disable nav arrows
+  const prev = document.getElementById("lb-prev");
+  const next = document.getElementById("lb-next");
+  prev.disabled = index === 0;
+  next.disabled = index >= loadedHits.length - 1;
+
   if (!lightbox.open) lightbox.showModal();
 }
 
@@ -263,6 +299,15 @@ function showNext(delta) {
 lightbox.addEventListener("keydown", (e) => {
   if (e.key === "ArrowRight") { e.preventDefault(); showNext(1); }
   else if (e.key === "ArrowLeft") { e.preventDefault(); showNext(-1); }
+});
+
+document.getElementById("lb-prev").addEventListener("click", (e) => {
+  e.preventDefault();
+  showNext(-1);
+});
+document.getElementById("lb-next").addEventListener("click", (e) => {
+  e.preventDefault();
+  showNext(1);
 });
 
 function clearFilters() {
@@ -450,24 +495,35 @@ function makeTile({ name, count, sample, onClick }) {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "tile" + (sample ? "" : " tile-placeholder");
+  btn.title = `${name} · ${count} photo${count === 1 ? "" : "s"}`;
   btn.addEventListener("click", onClick);
 
-  const img = document.createElement("img");
-  img.loading = "lazy";
-  img.alt = "";
-  if (sample) img.src = `/api/thumb/${sample}?size=240`;
-  btn.appendChild(img);
+  if (sample) {
+    const img = document.createElement("img");
+    img.loading = "lazy";
+    img.alt = "";
+    img.src = `/api/thumb/${sample}?size=320`;
+    btn.appendChild(img);
+  }
+
+  const overlay = document.createElement("div");
+  overlay.className = "tile-overlay";
+  btn.appendChild(overlay);
+
+  const textWrap = document.createElement("div");
+  textWrap.className = "tile-text";
 
   const nameEl = document.createElement("div");
   nameEl.className = "tile-name";
   nameEl.textContent = name;
-  btn.appendChild(nameEl);
+  textWrap.appendChild(nameEl);
 
   const countEl = document.createElement("div");
   countEl.className = "tile-count";
   countEl.textContent = `${count} photo${count === 1 ? "" : "s"}`;
-  btn.appendChild(countEl);
+  textWrap.appendChild(countEl);
 
+  btn.appendChild(textWrap);
   return btn;
 }
 
