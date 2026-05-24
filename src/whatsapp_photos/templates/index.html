@@ -12,8 +12,18 @@
   <form id="filters">
     <input type="search" name="q" placeholder="Search captions, sender, chat, filename"
            autocomplete="off" autofocus>
-    <select name="chat_id" aria-label="Filter by chat"><option value="">All chats</option></select>
-    <select name="sender" aria-label="Filter by sender"><option value="">All senders</option></select>
+    <div class="combobox" data-cb="chat">
+      <input type="text" class="cb-input" placeholder="All chats"
+             autocomplete="off" aria-label="Filter by chat">
+      <input type="hidden" name="chat_id">
+      <ul class="cb-list" role="listbox" hidden></ul>
+    </div>
+    <div class="combobox" data-cb="sender">
+      <input type="text" class="cb-input" placeholder="All senders"
+             autocomplete="off" aria-label="Filter by sender">
+      <input type="hidden" name="sender">
+      <ul class="cb-list" role="listbox" hidden></ul>
+    </div>
     <label class="date-field">From <input type="date" name="since"></label>
     <label class="date-field">Until <input type="date" name="until"></label>
     <select name="order" aria-label="Sort order">
@@ -26,6 +36,16 @@
   </form>
   <div id="status"></div>
 </header>
+<section id="browse" hidden>
+  <div class="browse-section">
+    <h2>Top chats</h2>
+    <div class="tile-row" id="browse-chats"></div>
+  </div>
+  <div class="browse-section">
+    <h2>Top people</h2>
+    <div class="tile-row" id="browse-senders"></div>
+  </div>
+</section>
 <main id="grid"></main>
 <dialog id="lightbox">
   <button id="close-lb" aria-label="Close">&times;</button>

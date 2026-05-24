@@ -150,7 +150,9 @@ def count_photos(conn: sqlite3.Connection, filters: SearchFilters) -> int:
 def list_chats(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
-        "SELECT c.id, c.jid, c.name, c.is_group, COUNT(p.id) AS photo_count "
+        "SELECT c.id, c.jid, c.name, c.is_group, COUNT(p.id) AS photo_count, "
+        "(SELECT id FROM photos WHERE chat_id = c.id "
+        " ORDER BY taken_at DESC LIMIT 1) AS sample_photo_id "
         "FROM chats c LEFT JOIN photos p ON p.chat_id = c.id "
         "GROUP BY c.id ORDER BY photo_count DESC, c.name"
     ).fetchall()
@@ -160,8 +162,11 @@ def list_chats(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 def list_senders(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
-        "SELECT sender_jid, sender_name, COUNT(*) AS photo_count FROM photos "
-        "WHERE sender_jid IS NOT NULL "
+        "SELECT sender_jid, sender_name, COUNT(*) AS photo_count, "
+        "MAX(taken_at) AS latest_at, "
+        "(SELECT id FROM photos p2 WHERE p2.sender_jid = p1.sender_jid "
+        " ORDER BY p2.taken_at DESC LIMIT 1) AS sample_photo_id "
+        "FROM photos p1 WHERE sender_jid IS NOT NULL "
         "GROUP BY sender_jid ORDER BY photo_count DESC"
     ).fetchall()
     return [dict(r) for r in rows]

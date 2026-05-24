@@ -7,6 +7,7 @@ const lightbox = document.getElementById("lightbox");
 const fullImg = document.getElementById("full");
 const meta = document.getElementById("meta");
 const clearBtn = document.getElementById("clear-filters");
+const browseSection = document.getElementById("browse");
 document.getElementById("close-lb").addEventListener("click", () => lightbox.close());
 
 let nextOffset = 0;
@@ -14,6 +15,9 @@ let total = 0;
 let loadedHits = [];
 let currentIndex = -1;
 let chatJidToId = null;
+let chatById = new Map();   // id (string) -> {name, photo_count}
+let senderByJid = new Map(); // jid -> {name, photo_count}
+let suppressUrlSync = false;
 
 function fmtDate(unix) {
   if (!unix) return "";
@@ -27,17 +31,42 @@ function dateToUnix(input) {
   return Math.floor(d.getTime() / 1000);
 }
 
-function buildQuery(reset) {
+function unixToDateInput(unix) {
+  if (!unix) return "";
+  const d = new Date(unix * 1000);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function currentFilters() {
   const fd = new FormData(form);
+  return {
+    q: fd.get("q") || "",
+    chat_id: fd.get("chat_id") || "",
+    sender: fd.get("sender") || "",
+    since: fd.get("since") || "",
+    until: fd.get("until") || "",
+    order: fd.get("order") || "newest",
+  };
+}
+
+function hasAnyFilter(f) {
+  return Boolean(f.q || f.chat_id || f.sender || f.since || f.until);
+}
+
+function buildQuery(reset) {
+  const f = currentFilters();
   const params = new URLSearchParams();
-  if (fd.get("q")) params.set("q", fd.get("q"));
-  if (fd.get("chat_id")) params.set("chat_id", fd.get("chat_id"));
-  if (fd.get("sender")) params.set("sender", fd.get("sender"));
-  const since = dateToUnix(fd.get("since"));
+  if (f.q) params.set("q", f.q);
+  if (f.chat_id) params.set("chat_id", f.chat_id);
+  if (f.sender) params.set("sender", f.sender);
+  const since = dateToUnix(f.since);
   if (since) params.set("since", since);
-  const until = dateToUnix(fd.get("until"));
+  const until = dateToUnix(f.until);
   if (until) params.set("until", until + 86399);
-  if (fd.get("order")) params.set("order", fd.get("order"));
+  if (f.order) params.set("order", f.order);
   if (reset) nextOffset = 0;
   params.set("offset", nextOffset);
   params.set("limit", 60);
@@ -70,7 +99,10 @@ async function runSearch(reset) {
     nextOffset = total;
   }
   renderEmptyState();
+  updateBrowseVisibility();
   statusEl.textContent = `${total} photo${total === 1 ? "" : "s"}`;
+  updateDocTitle();
+  if (reset) syncUrlFromForm();
 }
 
 function renderEmptyState() {
@@ -154,13 +186,13 @@ function makePivot(label, fieldName, value, disabled) {
 }
 
 function pivotTo(fieldName, value) {
-  const select = form.querySelector(`select[name=${fieldName}]`);
-  if (!select) return;
-  if ([...select.options].some((o) => o.value === value)) {
-    select.value = value;
-    runSearch(true);
-    window.scrollTo({ top: 0, behavior: "smooth" });
+  if (fieldName === "chat_id") {
+    setComboboxValue("chat", value);
+  } else if (fieldName === "sender") {
+    setComboboxValue("sender", value);
   }
+  runSearch(true);
+  window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 function safeSnippet(raw) {
@@ -234,12 +266,16 @@ lightbox.addEventListener("keydown", (e) => {
 });
 
 function clearFilters() {
-  form.reset();
-  // Selects don't always reset to first option on form.reset() if a
-  // value was set programmatically; force it.
+  for (const input of form.querySelectorAll("input, select")) {
+    if (input.type === "search" || input.type === "date" || input.type === "text") {
+      input.value = "";
+    } else if (input.type === "hidden") {
+      input.value = "";
+    }
+  }
   for (const sel of form.querySelectorAll("select")) sel.selectedIndex = 0;
-  for (const input of form.querySelectorAll("input")) {
-    if (input.type === "search" || input.type === "date") input.value = "";
+  for (const cb of form.querySelectorAll(".cb-input")) {
+    cb.classList.remove("has-selection");
   }
   runSearch(true);
 }
@@ -253,32 +289,292 @@ function escapeHtml(s) {
     .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+// ---------------------------------------------------------------------------
+// Combobox: filterable dropdown that writes to a hidden form input.
+// ---------------------------------------------------------------------------
+
+const COMBOBOXES = {};   // name -> { input, hidden, list, options }
+
+function setupCombobox(cbEl) {
+  const name = cbEl.dataset.cb;
+  const input = cbEl.querySelector(".cb-input");
+  const hidden = cbEl.querySelector("input[type=hidden]");
+  const list = cbEl.querySelector(".cb-list");
+  const state = { input, hidden, list, options: [], activeIndex: -1 };
+  COMBOBOXES[name] = state;
+
+  input.addEventListener("focus", () => showList(state, ""));
+  input.addEventListener("input", () => {
+    hidden.value = "";
+    input.classList.remove("has-selection");
+    showList(state, input.value);
+  });
+  input.addEventListener("keydown", (e) => onComboboxKey(e, state));
+  // Hide list on blur, with a delay so click handlers on list items fire.
+  input.addEventListener("blur", () => setTimeout(() => hideList(state), 150));
+}
+
+function setComboboxOptions(name, options) {
+  const state = COMBOBOXES[name];
+  if (!state) return;
+  state.options = options;
+}
+
+function showList(state, filter) {
+  const f = filter.trim().toLowerCase();
+  const matches = (f
+    ? state.options.filter((o) => o.label.toLowerCase().includes(f))
+    : state.options
+  ).slice(0, 200);
+
+  state.list.innerHTML = "";
+  state.activeIndex = -1;
+  if (!matches.length) {
+    const li = document.createElement("li");
+    li.className = "cb-empty";
+    li.textContent = f ? `No matches for "${filter}"` : "(no options)";
+    state.list.appendChild(li);
+    state.list.hidden = false;
+    return;
+  }
+  for (const [i, opt] of matches.entries()) {
+    const li = document.createElement("li");
+    li.dataset.value = opt.value;
+    li.dataset.label = opt.label;
+    li.setAttribute("role", "option");
+    li.textContent = opt.label;
+    if (opt.count !== undefined) {
+      const c = document.createElement("span");
+      c.className = "cb-count";
+      c.textContent = `(${opt.count})`;
+      li.appendChild(c);
+    }
+    li.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      selectComboboxOption(state, opt.value, opt.label);
+    });
+    state.list.appendChild(li);
+  }
+  state.list.hidden = false;
+}
+
+function hideList(state) {
+  state.list.hidden = true;
+}
+
+function selectComboboxOption(state, value, label) {
+  state.input.value = label;
+  state.input.classList.add("has-selection");
+  state.hidden.value = value;
+  hideList(state);
+  runSearch(true);
+}
+
+function onComboboxKey(e, state) {
+  const items = Array.from(state.list.querySelectorAll("li:not(.cb-empty)"));
+  if (e.key === "ArrowDown") {
+    if (state.list.hidden) showList(state, state.input.value);
+    state.activeIndex = Math.min(items.length - 1, state.activeIndex + 1);
+    highlightActive(state, items);
+    e.preventDefault();
+  } else if (e.key === "ArrowUp") {
+    state.activeIndex = Math.max(0, state.activeIndex - 1);
+    highlightActive(state, items);
+    e.preventDefault();
+  } else if (e.key === "Enter") {
+    if (state.activeIndex >= 0 && items[state.activeIndex]) {
+      const li = items[state.activeIndex];
+      selectComboboxOption(state, li.dataset.value, li.dataset.label);
+      e.preventDefault();
+    } else if (items.length === 1) {
+      // Single match: pick it on Enter.
+      const li = items[0];
+      selectComboboxOption(state, li.dataset.value, li.dataset.label);
+      e.preventDefault();
+    }
+  } else if (e.key === "Escape") {
+    hideList(state);
+  }
+}
+
+function highlightActive(state, items) {
+  for (const [i, li] of items.entries()) {
+    li.classList.toggle("active", i === state.activeIndex);
+  }
+  if (state.activeIndex >= 0) {
+    items[state.activeIndex].scrollIntoView({ block: "nearest" });
+  }
+}
+
+function setComboboxValue(name, value) {
+  const state = COMBOBOXES[name];
+  if (!state) return;
+  const opt = state.options.find((o) => String(o.value) === String(value));
+  if (!opt) return;
+  state.input.value = opt.label;
+  state.input.classList.add("has-selection");
+  state.hidden.value = String(opt.value);
+  hideList(state);
+}
+
+// ---------------------------------------------------------------------------
+// Browse panel: top chats + top senders as visual tiles.
+// ---------------------------------------------------------------------------
+
+function renderBrowsePanel(chats, senders) {
+  const chatRow = document.getElementById("browse-chats");
+  const senderRow = document.getElementById("browse-senders");
+  chatRow.innerHTML = "";
+  senderRow.innerHTML = "";
+
+  for (const c of chats.slice(0, 12)) {
+    chatRow.appendChild(makeTile({
+      name: c.name || c.jid,
+      count: c.photo_count,
+      sample: c.sample_photo_id,
+      onClick: () => pivotTo("chat_id", String(c.id)),
+    }));
+  }
+  for (const s of senders.slice(0, 12)) {
+    if (!s.sender_jid) continue;
+    senderRow.appendChild(makeTile({
+      name: s.sender_name || s.sender_jid,
+      count: s.photo_count,
+      sample: s.sample_photo_id,
+      onClick: () => pivotTo("sender", s.sender_jid),
+    }));
+  }
+}
+
+function makeTile({ name, count, sample, onClick }) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "tile" + (sample ? "" : " tile-placeholder");
+  btn.addEventListener("click", onClick);
+
+  const img = document.createElement("img");
+  img.loading = "lazy";
+  img.alt = "";
+  if (sample) img.src = `/api/thumb/${sample}?size=240`;
+  btn.appendChild(img);
+
+  const nameEl = document.createElement("div");
+  nameEl.className = "tile-name";
+  nameEl.textContent = name;
+  btn.appendChild(nameEl);
+
+  const countEl = document.createElement("div");
+  countEl.className = "tile-count";
+  countEl.textContent = `${count} photo${count === 1 ? "" : "s"}`;
+  btn.appendChild(countEl);
+
+  return btn;
+}
+
+function updateBrowseVisibility() {
+  if (!browseSection) return;
+  browseSection.hidden = hasAnyFilter(currentFilters());
+}
+
+// ---------------------------------------------------------------------------
+// URL state: keep ?q=…&chat_id=…&sender=… in sync with the form.
+// ---------------------------------------------------------------------------
+
+function syncUrlFromForm() {
+  if (suppressUrlSync) return;
+  const f = currentFilters();
+  const params = new URLSearchParams();
+  if (f.q) params.set("q", f.q);
+  if (f.chat_id) params.set("chat_id", f.chat_id);
+  if (f.sender) params.set("sender", f.sender);
+  if (f.since) params.set("since", f.since);
+  if (f.until) params.set("until", f.until);
+  if (f.order && f.order !== "newest") params.set("order", f.order);
+  const qs = params.toString();
+  const newUrl = qs ? `?${qs}` : window.location.pathname;
+  history.replaceState({ filters: f }, "", newUrl);
+}
+
+function applyUrlToForm() {
+  const url = new URL(window.location.href);
+  const q = url.searchParams.get("q") || "";
+  const chat_id = url.searchParams.get("chat_id") || "";
+  const sender = url.searchParams.get("sender") || "";
+  const since = url.searchParams.get("since") || "";
+  const until = url.searchParams.get("until") || "";
+  const order = url.searchParams.get("order") || "newest";
+
+  form.querySelector("input[name=q]").value = q;
+  form.querySelector("input[name=since]").value = since;
+  form.querySelector("input[name=until]").value = until;
+  form.querySelector("select[name=order]").value = order;
+
+  if (chat_id) setComboboxValue("chat", chat_id);
+  if (sender) setComboboxValue("sender", sender);
+}
+
+function updateDocTitle() {
+  const f = currentFilters();
+  const parts = [];
+  if (f.q) parts.push(`"${f.q}"`);
+  if (f.chat_id && chatById.has(f.chat_id)) parts.push(chatById.get(f.chat_id).name);
+  if (f.sender && senderByJid.has(f.sender)) parts.push(senderByJid.get(f.sender).name);
+  const suffix = parts.length ? ` — ${parts.join(" · ")}` : "";
+  document.title = `WhatsApp Photo Archive${suffix}`;
+}
+
+window.addEventListener("popstate", (e) => {
+  suppressUrlSync = true;
+  try {
+    applyUrlToForm();
+    runSearch(true);
+  } finally {
+    suppressUrlSync = false;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Boot
+// ---------------------------------------------------------------------------
+
 async function loadFilterOptions() {
   const [chats, senders] = await Promise.all([
     fetch("/api/chats").then(r => r.json()),
     fetch("/api/senders").then(r => r.json()),
   ]);
-  const chatSel = form.querySelector("select[name=chat_id]");
-  // Map chat_jid → chat id so the pivot UI in cards (which only sees
-  // jid) can populate the chat_id filter dropdown.
   chatJidToId = new Map();
   for (const c of chats) {
     chatJidToId.set(c.jid, c.id);
-    const o = document.createElement("option");
-    o.value = c.id;
-    o.textContent = `${c.name || c.jid} (${c.photo_count})`;
-    chatSel.appendChild(o);
+    chatById.set(String(c.id), { name: c.name || c.jid, photo_count: c.photo_count });
   }
-  const senderSel = form.querySelector("select[name=sender]");
   for (const s of senders) {
-    if (!s.sender_jid) continue;
-    const o = document.createElement("option");
-    o.value = s.sender_jid;
-    o.textContent = `${s.sender_name || s.sender_jid} (${s.photo_count})`;
-    senderSel.appendChild(o);
+    if (s.sender_jid) {
+      senderByJid.set(s.sender_jid, { name: s.sender_name || s.sender_jid, photo_count: s.photo_count });
+    }
   }
+
+  // Combobox options.
+  setComboboxOptions("chat", chats.map((c) => ({
+    value: String(c.id),
+    label: `${c.name || c.jid} (${c.photo_count})`,
+    count: undefined,  // count is part of the label already
+  })));
+  setComboboxOptions("sender", senders
+    .filter((s) => s.sender_jid)
+    .map((s) => ({
+      value: s.sender_jid,
+      label: `${s.sender_name || s.sender_jid} (${s.photo_count})`,
+      count: undefined,
+    })));
+
+  renderBrowsePanel(chats, senders);
 }
+
+for (const cbEl of document.querySelectorAll(".combobox")) setupCombobox(cbEl);
 
 form.addEventListener("submit", (e) => { e.preventDefault(); runSearch(true); });
 
-loadFilterOptions().then(() => runSearch(true));
+loadFilterOptions().then(() => {
+  applyUrlToForm();
+  runSearch(true);
+});
