@@ -77,7 +77,15 @@ def create_app(db_path: Path) -> FastAPI:
             conn.close()
 
     @app.get("/", response_class=HTMLResponse)
-    def index(request: Request, _=Depends(require_auth)) -> HTMLResponse:
+    def chats_landing(request: Request, _=Depends(require_auth)) -> HTMLResponse:
+        return templates.TemplateResponse(
+            request=request,
+            name="chats.html",
+            context={"title": "WhatsApp Archive"},
+        )
+
+    @app.get("/search", response_class=HTMLResponse)
+    def search_page(request: Request, _=Depends(require_auth)) -> HTMLResponse:
         return templates.TemplateResponse(
             request=request,
             name="index.html",

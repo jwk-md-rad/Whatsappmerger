@@ -168,13 +168,22 @@ def list_chats(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         "COUNT(m.id) AS message_count, "
         "SUM(CASE WHEN m.type = 'image' THEN 1 ELSE 0 END) AS photo_count, "
         "(SELECT id FROM messages WHERE chat_id = c.id AND type = 'image' "
-        " ORDER BY sent_at DESC LIMIT 1) AS sample_photo_id "
-        "FROM chats c LEFT JOIN messages m ON m.chat_id = c.id "
-        "GROUP BY c.id ORDER BY message_count DESC, c.name"
+        " ORDER BY sent_at DESC LIMIT 1) AS sample_photo_id, "
+        "last_m.sent_at      AS last_message_at, "
+        "last_m.body         AS last_message_body, "
+        "last_m.type         AS last_message_type, "
+        "last_m.is_from_me   AS last_message_from_me, "
+        "last_m.sender_name  AS last_message_sender "
+        "FROM chats c "
+        "LEFT JOIN messages m ON m.chat_id = c.id "
+        "LEFT JOIN messages last_m ON last_m.id = ("
+        "  SELECT id FROM messages "
+        "  WHERE chat_id = c.id AND sent_at IS NOT NULL "
+        "  ORDER BY sent_at DESC, id DESC LIMIT 1"
+        ") "
+        "GROUP BY c.id "
+        "ORDER BY last_message_at IS NULL, last_message_at DESC, c.name"
     ).fetchall()
-    # Old field name kept so the existing API/UI continues to work; the
-    # browse panel uses ``photo_count``, sort by total activity makes the
-    # busiest chats float up regardless of whether they had many photos.
     return [dict(r) for r in rows]
 
 

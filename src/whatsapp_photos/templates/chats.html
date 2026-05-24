@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ title }}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="chats-page">
+<header class="chats-header">
+  <h1>{{ title }}</h1>
+  <div class="chats-header-actions">
+    <input type="search" id="chat-filter" placeholder="Filter chats by name"
+           autocomplete="off" aria-label="Filter chats by name">
+    <a href="/search" class="chats-search-link">Search messages</a>
+  </div>
+</header>
+<main id="chats-list" aria-busy="true">
+  <div class="chats-empty" id="chats-empty" hidden>No chats yet — run <code>wa-photos ingest</code> first.</div>
+  <div class="chats-loading" id="chats-loading">Loading chats…</div>
+</main>
+<script src="/static/chats.js" defer></script>
+</body>
+</html>
