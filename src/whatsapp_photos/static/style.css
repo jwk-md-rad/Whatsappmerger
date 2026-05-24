@@ -61,6 +61,37 @@ form#filters button {
   font-weight: 600;
 }
 
+form#filters button#clear-filters {
+  background: transparent;
+  color: var(--muted);
+  border-color: var(--border);
+  font-weight: 400;
+}
+
+form#filters button#clear-filters:hover {
+  color: var(--fg);
+  border-color: var(--muted);
+}
+
+form#filters .date-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 0.6rem;
+}
+
+form#filters .date-field input[type=date] {
+  border: 0;
+  background: transparent;
+  padding: 0.4rem 0;
+  color: var(--fg);
+}
+
 #status {
   margin-top: 0.5rem;
   font-size: 0.85rem;
@@ -102,6 +133,18 @@ main#grid {
   font-weight: 500;
 }
 
+.pivot {
+  cursor: pointer;
+  border-bottom: 1px dotted transparent;
+}
+
+.pivot:hover,
+.pivot:focus {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  outline: none;
+}
+
 .card .caption {
   margin-top: 0.25rem;
   color: var(--fg);
@@ -120,6 +163,24 @@ main#grid {
   grid-column: 1 / -1;
   text-align: center;
   margin-top: 1rem;
+}
+
+.empty-state {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 3rem 1rem;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.empty-state a {
+  color: var(--accent);
+}
+
+#meta .lb-nav {
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--muted);
 }
 
 dialog#lightbox {

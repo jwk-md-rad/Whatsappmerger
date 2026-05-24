@@ -6,11 +6,14 @@ const statusEl = document.getElementById("status");
 const lightbox = document.getElementById("lightbox");
 const fullImg = document.getElementById("full");
 const meta = document.getElementById("meta");
+const clearBtn = document.getElementById("clear-filters");
 document.getElementById("close-lb").addEventListener("click", () => lightbox.close());
 
 let nextOffset = 0;
-let lastQuery = {};
 let total = 0;
+let loadedHits = [];
+let currentIndex = -1;
+let chatJidToId = null;
 
 function fmtDate(unix) {
   if (!unix) return "";
@@ -43,16 +46,22 @@ function buildQuery(reset) {
 
 async function runSearch(reset) {
   const params = buildQuery(reset);
+  statusEl.textContent = "Searching…";
   const r = await fetch("/api/search?" + params.toString());
   if (!r.ok) {
     statusEl.textContent = "Search failed: " + r.status;
     return;
   }
   const data = await r.json();
-  if (reset) grid.innerHTML = "";
+  if (reset) {
+    grid.innerHTML = "";
+    loadedHits = [];
+  }
   total = data.total;
   for (const hit of data.results) {
-    grid.appendChild(renderCard(hit));
+    if (chatJidToId) hit._chat_id = chatJidToId.get(hit.chat_jid);
+    loadedHits.push(hit);
+    grid.appendChild(renderCard(hit, loadedHits.length - 1));
   }
   if (data.next_offset !== null) {
     nextOffset = data.next_offset;
@@ -60,32 +69,62 @@ async function runSearch(reset) {
   } else {
     nextOffset = total;
   }
+  renderEmptyState();
   statusEl.textContent = `${total} photo${total === 1 ? "" : "s"}`;
 }
 
-function renderCard(hit) {
+function renderEmptyState() {
+  const existing = document.getElementById("empty-state");
+  if (existing) existing.remove();
+  if (total !== 0) return;
+  const div = document.createElement("div");
+  div.id = "empty-state";
+  div.className = "empty-state";
+  div.innerHTML = `No photos match these filters. <a href="#" id="empty-clear">Clear filters</a> and try again.`;
+  div.querySelector("#empty-clear").addEventListener("click", (e) => {
+    e.preventDefault();
+    clearFilters();
+  });
+  grid.appendChild(div);
+}
+
+function renderCard(hit, index) {
   const card = document.createElement("div");
   card.className = "card";
   card.tabIndex = 0;
-  card.addEventListener("click", () => openLightbox(hit));
-  card.addEventListener("keypress", (e) => { if (e.key === "Enter") openLightbox(hit); });
+  card.addEventListener("click", (e) => {
+    if (e.target.closest(".pivot")) return;
+    openLightbox(index);
+  });
+  card.addEventListener("keypress", (e) => { if (e.key === "Enter") openLightbox(index); });
 
   const img = document.createElement("img");
   img.loading = "lazy";
   img.src = hit.thumb_url;
-  img.alt = hit.caption || hit.filename;
+  img.alt = hit.caption || `Photo from ${hit.chat_name || hit.chat_jid}`;
   card.appendChild(img);
 
   const info = document.createElement("div");
   info.className = "info";
-  const from = hit.is_from_me ? "Me" : (hit.sender_name || hit.sender_jid || "?");
-  const where = hit.is_group ? `${hit.chat_name || hit.chat_jid}` : (hit.chat_name || hit.chat_jid);
-  info.innerHTML = `<div><span class="from">${escapeHtml(from)}</span> · ${escapeHtml(where)}</div>` +
-                   `<div>${escapeHtml(fmtDate(hit.taken_at))}</div>`;
+  const fromName = hit.is_from_me ? "Me" : (hit.sender_name || hit.sender_jid || "?");
+  const chatName = hit.chat_name || hit.chat_jid;
+
+  const line1 = document.createElement("div");
+  const fromEl = makePivot(fromName, "sender", hit.sender_jid, hit.is_from_me);
+  fromEl.classList.add("from");
+  line1.appendChild(fromEl);
+  line1.appendChild(document.createTextNode(" · "));
+  line1.appendChild(makePivot(chatName, "chat_id", String(hit._chat_id || ""), false));
+  info.appendChild(line1);
+
+  const line2 = document.createElement("div");
+  line2.textContent = fmtDate(hit.taken_at);
+  info.appendChild(line2);
+
   if (hit.snippet) {
     const cap = document.createElement("div");
     cap.className = "caption";
-    cap.innerHTML = hit.snippet;
+    cap.innerHTML = safeSnippet(hit.snippet);
     info.appendChild(cap);
   } else if (hit.caption) {
     const cap = document.createElement("div");
@@ -95,6 +134,42 @@ function renderCard(hit) {
   }
   card.appendChild(info);
   return card;
+}
+
+function makePivot(label, fieldName, value, disabled) {
+  const span = document.createElement("span");
+  span.textContent = label;
+  if (disabled || !value) return span;
+  span.className = "pivot";
+  span.title = `Show only items where ${fieldName === "sender" ? "sender" : "chat"} = ${label}`;
+  span.tabIndex = 0;
+  const activate = (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    pivotTo(fieldName, value);
+  };
+  span.addEventListener("click", activate);
+  span.addEventListener("keypress", (e) => { if (e.key === "Enter") activate(e); });
+  return span;
+}
+
+function pivotTo(fieldName, value) {
+  const select = form.querySelector(`select[name=${fieldName}]`);
+  if (!select) return;
+  if ([...select.options].some((o) => o.value === value)) {
+    select.value = value;
+    runSearch(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+}
+
+function safeSnippet(raw) {
+  // SQLite snippet() returns text with raw <mark> markers but does not
+  // escape anything else. Escape the whole string, then restore the
+  // mark tags we control.
+  return escapeHtml(raw)
+    .replace(/&lt;mark&gt;/g, "<mark>")
+    .replace(/&lt;\/mark&gt;/g, "</mark>");
 }
 
 function appendLoadMore() {
@@ -107,21 +182,69 @@ function appendLoadMore() {
   grid.appendChild(btn);
 }
 
-function openLightbox(hit) {
+function openLightbox(index) {
+  currentIndex = index;
+  const hit = loadedHits[index];
   fullImg.src = hit.photo_url;
   const date = fmtDate(hit.taken_at);
-  const from = hit.is_from_me ? "Me" : (hit.sender_name || hit.sender_jid || "?");
-  meta.innerHTML =
-    `<strong>${escapeHtml(from)}</strong> in ${escapeHtml(hit.chat_name || hit.chat_jid)}<br>` +
-    `${escapeHtml(date)} · ${hit.width || "?"}×${hit.height || "?"} · ${escapeHtml(hit.filename)}`;
+  const fromName = hit.is_from_me ? "Me" : (hit.sender_name || hit.sender_jid || "?");
+  const chatName = hit.chat_name || hit.chat_jid;
+
+  meta.innerHTML = "";
+  const head = document.createElement("div");
+  const fromEl = makePivot(fromName, "sender", hit.sender_jid, hit.is_from_me);
+  fromEl.classList.add("from");
+  const strong = document.createElement("strong");
+  strong.appendChild(fromEl);
+  head.appendChild(strong);
+  head.appendChild(document.createTextNode(" in "));
+  head.appendChild(makePivot(chatName, "chat_id", String(hit._chat_id || ""), false));
+  meta.appendChild(head);
+
+  const sub = document.createElement("div");
+  sub.textContent =
+    `${date} · ${hit.width || "?"}×${hit.height || "?"} · ${hit.filename}`;
+  meta.appendChild(sub);
+
   if (hit.caption) {
     const c = document.createElement("div");
     c.className = "caption-full";
     c.textContent = hit.caption;
     meta.appendChild(c);
   }
-  lightbox.showModal();
+
+  const nav = document.createElement("div");
+  nav.className = "lb-nav";
+  nav.textContent = `${index + 1} of ${loadedHits.length}${total > loadedHits.length ? ` (${total} total)` : ""}`;
+  meta.appendChild(nav);
+
+  if (!lightbox.open) lightbox.showModal();
 }
+
+function showNext(delta) {
+  if (currentIndex < 0) return;
+  const next = currentIndex + delta;
+  if (next < 0 || next >= loadedHits.length) return;
+  openLightbox(next);
+}
+
+lightbox.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowRight") { e.preventDefault(); showNext(1); }
+  else if (e.key === "ArrowLeft") { e.preventDefault(); showNext(-1); }
+});
+
+function clearFilters() {
+  form.reset();
+  // Selects don't always reset to first option on form.reset() if a
+  // value was set programmatically; force it.
+  for (const sel of form.querySelectorAll("select")) sel.selectedIndex = 0;
+  for (const input of form.querySelectorAll("input")) {
+    if (input.type === "search" || input.type === "date") input.value = "";
+  }
+  runSearch(true);
+}
+
+clearBtn.addEventListener("click", clearFilters);
 
 function escapeHtml(s) {
   if (s == null) return "";
@@ -136,7 +259,11 @@ async function loadFilterOptions() {
     fetch("/api/senders").then(r => r.json()),
   ]);
   const chatSel = form.querySelector("select[name=chat_id]");
+  // Map chat_jid → chat id so the pivot UI in cards (which only sees
+  // jid) can populate the chat_id filter dropdown.
+  chatJidToId = new Map();
   for (const c of chats) {
+    chatJidToId.set(c.jid, c.id);
     const o = document.createElement("option");
     o.value = c.id;
     o.textContent = `${c.name || c.jid} (${c.photo_count})`;

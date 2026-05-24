@@ -162,7 +162,7 @@ def list_senders(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     rows = conn.execute(
         "SELECT sender_jid, sender_name, COUNT(*) AS photo_count FROM photos "
         "WHERE sender_jid IS NOT NULL "
-        "GROUP BY sender_jid ORDER BY photo_count DESC LIMIT 200"
+        "GROUP BY sender_jid ORDER BY photo_count DESC"
     ).fetchall()
     return [dict(r) for r in rows]
 
