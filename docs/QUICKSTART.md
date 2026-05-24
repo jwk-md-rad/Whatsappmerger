@@ -17,22 +17,25 @@ my laptop and my phone, anywhere in the world".
 
 **You'll end with:**
 
-- A password-protected searchable archive of every photo *and every
-  text message* in your WhatsApp history, on your own laptop.
-- A small web viewer with thumbnails, full-text search across both
-  message bodies and image captions, chat and sender filters, and a
-  lightbox that handles both photos and text messages.
+- A password-protected searchable archive of every photo, voice note,
+  video, *and every text message* in your WhatsApp history, on your
+  own laptop.
+- A small web viewer with two complementary modes: a **search grid**
+  that mixes text + image + audio + video hits with full-text search
+  across captions and message bodies, and a **chat thread view** that
+  lays out any single conversation chronologically — WhatsApp-style
+  bubbles, date separators, sender colors, plus a monthly histogram
+  scrubber and a date picker so you can jump straight to "July 2022".
 - An encrypted Tailscale connection so the viewer opens on your iPhone
   from any network.
 - (Optional) Shared access for one other trusted person — your partner
   — on their own laptop and phone.
 
-> **Scope note:** the archive currently indexes **text and image**
-> messages. Voice notes, videos, and documents are present in the
-> iMazing extract but not yet exposed in the viewer (they're skipped
-> at ingest). For most users this still covers ~95% of useful content;
-> a typical 700k-message library produces a single sub-300-MB SQLite
-> database that searches in milliseconds.
+> **Scope note:** the archive indexes **text, images, voice notes,
+> and videos**. Documents (PDF, etc.) and stickers are present in the
+> iMazing extract but not yet exposed; they're skipped at ingest. A
+> typical 700k-message library produces a sub-300-MB SQLite database
+> that searches in milliseconds.
 
 ---
 
@@ -305,19 +308,24 @@ The tool prints a summary like:
 Ingested -> /Users/you/photos.db
   Images inserted:        4,821
   Text messages inserted: 687,234
+  Voice notes / audio:    9,612
+  Videos inserted:        1,408
   Chats:                  2,203
   Skipped (file missing): 12
-  Skipped (not image):    3,140
+  Skipped (unsupported):  640
   Elapsed:                412.55s
 ```
 
-- **Images** are messages with attached photos that opened cleanly.
+- **Images** are messages with photo attachments that opened cleanly.
 - **Text messages** are plain chat text (the bulk of any WhatsApp
   history). Image captions are stored alongside the image and don't
   count here.
-- **Skipped (not image)** is mostly videos, voice notes, documents and
-  stickers — currently not exposed in the viewer. They're not lost,
-  just not indexed; a future version can pick them up.
+- **Voice notes / audio** are .opus / .m4a / .mp3 / .wav / .caf
+  attachments — they play inline in the viewer.
+- **Videos** are .mp4 / .mov / .webm — also play inline.
+- **Skipped (unsupported)** is documents (PDF/Word/etc.), stickers
+  without a caption, and any other media format we don't render yet.
+  Not lost, just not indexed — a future version can pick them up.
 - A few **Skipped (file missing)** rows are normal (expired view-once
   media). Many usually means the extract in Step 2 didn't include
   media; re-run with *Include Media* / *Include Documents* checked in
@@ -384,10 +392,29 @@ Closing it (or pressing *Ctrl-C*) stops the server.
 2. Open Safari (or Chrome) and paste the MagicDNS URL from Step 6.
 3. iOS prompts for credentials. Username can be anything (the tool
    ignores it). Enter the password you set in Step 4.
-4. You're in. Use the search box (it covers message bodies, image
-   captions, sender and chat names), the chat / sender / type
-   filters, the date range, and tap any card to view it full-size in
-   the lightbox. Use ← / → in the lightbox to walk through results.
+4. You're in. The viewer has two complementary modes:
+
+   - **Search mode** (the landing page) — one box that searches
+     across message bodies, image captions, sender and chat names.
+     Mix of photo cards, text bubbles, and inline audio / video
+     players. Filters: chat, sender, type (text / photo / voice
+     note / video), date range. Tap an image or text card to open the
+     lightbox; use ← / → to walk through results. Audio and video
+     cards play inline. The top of the page shows visual *Top chats*
+     and *Top people* tiles — clicking a chat tile opens that
+     conversation in thread mode.
+
+   - **Thread mode** (`/thread/<chat_id>`, reached by clicking any
+     chat tile or chat name) — the conversation laid out
+     chronologically like WhatsApp itself. Your messages right,
+     theirs left, sender names in unique colors for groups, date
+     separators between days. Voice notes and videos play in place;
+     tap an image to open the lightbox. The strip under the header
+     is a **monthly histogram** — each bar is a month, height shows
+     activity. Click any bar to jump there. The **Jump to** date
+     picker next to it does the same for arbitrary dates. The chosen
+     anchor message flashes briefly so you can spot where you
+     landed.
 
 Bookmark the URL so you don't have to re-type it. Add it to your home
 screen if you want a one-tap launcher.

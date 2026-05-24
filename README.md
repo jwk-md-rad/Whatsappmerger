@@ -1,19 +1,21 @@
 # whatsapp-photos
 
 A fully searchable, password-protectable archive built from a WhatsApp
-iOS backup. Indexes text messages and photos (image captions and bodies
-are both searchable via FTS5).
+iOS backup. Indexes text messages, photos, voice notes, and videos —
+captions and bodies are both searchable via FTS5.
 
 Input: an extracted `ChatStorage.sqlite` plus the `Message/Media/` tree
 (both pulled from your iTunes/Finder backup with a tool like iMazing).
 
 Output: one self-contained SQLite database with FTS5 full-text indexes
-plus a small local web viewer with thumbnails, filters, and a lightbox.
+plus a small local web viewer with a search grid (mixed-type cards,
+inline audio/video) and a per-chat thread reader (WhatsApp-style
+bubbles, monthly histogram scrubber, jump-to-date).
 
-> Voice notes, video, and document attachments are present in the
-> extract but not yet exposed in the viewer; they're skipped at ingest.
-> A typical 700k-message library produces a sub-300-MB database that
-> searches in milliseconds.
+> Documents (PDF, etc.) and stickers without a caption are skipped at
+> ingest — not lost, just not indexed yet. A typical 700k-message
+> library produces a sub-300-MB database that searches in
+> milliseconds.
 
 ## Try it out (no real data needed)
 
@@ -22,9 +24,10 @@ pip install -e .
 wa-photos demo
 ```
 
-Builds a synthetic archive (12 photos + 8 text messages across 5 chats)
-under `~/.cache/whatsapp_photos/demo/` and starts the viewer at
-`http://127.0.0.1:8765/`. Useful as a UI preview before you've
+Builds a synthetic archive (12 photos + 8 text messages + 3 voice
+notes across 5 chats) under `~/.cache/whatsapp_photos/demo/` and
+starts the viewer at `http://127.0.0.1:8765/`. Useful as a UI preview
+before you've
 extracted your real backup, and as a smoke test of the install.
 
 ## End-to-end walkthrough
@@ -134,9 +137,22 @@ encryption underneath.
 - **Free-text** over message body (image captions + text message
   bodies), sender name, chat name, filename (FTS5, `unicode61`,
   accent-folded). Highlights are returned as snippets.
-- **Filters**: chat, sender, message type (text / image), group/1-on-1,
-  from-me, date range.
+- **Filters**: chat, sender, message type (text / image / audio /
+  video), group/1-on-1, from-me, date range.
 - **Order**: newest, oldest, or relevance (when a query is given).
+
+## Thread view
+
+`/thread/<chat_id>` renders a single conversation chronologically with
+WhatsApp-style bubbles, group-sender colors, and date separators.
+Voice notes and videos play inline. A monthly histogram strip under
+the header maps the conversation over time — click any bar (or use
+the *Jump to* date picker) to leap directly to that month. Deep-link
+via `/thread/<chat_id>?at=<unix>` to land on a specific moment.
+
+Backed by `GET /api/thread/{chat_id}` (cursor-based pagination via
+`before` / `after` / `around` query params) and `GET
+/api/histogram/{chat_id}` (per-month counts).
 
 OCR of text inside photos and visual / face similarity search are not
 in scope for this version — they need bigger dependencies (Tesseract,
