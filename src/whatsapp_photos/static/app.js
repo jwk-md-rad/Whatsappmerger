@@ -153,13 +153,18 @@ function renderEmptyState() {
 
 function renderCard(hit, index) {
   const card = document.createElement("div");
-  card.className = "card" + (hit.type === "text" ? " card-text" : " card-image");
+  card.className = "card card-" + hit.type;
   card.tabIndex = 0;
-  card.addEventListener("click", (e) => {
-    if (e.target.closest(".pivot")) return;
-    openLightbox(index);
-  });
-  card.addEventListener("keypress", (e) => { if (e.key === "Enter") openLightbox(index); });
+  // Audio / video cards play inline — no lightbox click. Image and text
+  // open the lightbox as before.
+  const lightboxable = hit.type === "image" || hit.type === "text";
+  if (lightboxable) {
+    card.addEventListener("click", (e) => {
+      if (e.target.closest(".pivot")) return;
+      openLightbox(index);
+    });
+    card.addEventListener("keypress", (e) => { if (e.key === "Enter") openLightbox(index); });
+  }
 
   if (hit.type === "image") {
     const img = document.createElement("img");
@@ -167,6 +172,24 @@ function renderCard(hit, index) {
     img.src = hit.thumb_url;
     img.alt = hit.body || `Photo from ${hit.chat_name || hit.chat_jid}`;
     card.appendChild(img);
+  } else if (hit.type === "audio") {
+    const wrap = document.createElement("div");
+    wrap.className = "media-wrap audio-wrap";
+    const audio = document.createElement("audio");
+    audio.controls = true;
+    audio.preload = "none";
+    audio.src = hit.media_url;
+    wrap.appendChild(audio);
+    card.appendChild(wrap);
+  } else if (hit.type === "video") {
+    const wrap = document.createElement("div");
+    wrap.className = "media-wrap video-wrap";
+    const video = document.createElement("video");
+    video.controls = true;
+    video.preload = "metadata";
+    video.src = hit.media_url;
+    wrap.appendChild(video);
+    card.appendChild(wrap);
   } else {
     // Text bubble takes the place of the image area.
     const bubble = document.createElement("div");

@@ -150,6 +150,32 @@ function renderBubble(m, showSender) {
       cap.textContent = m.body;
       bubble.appendChild(cap);
     }
+  } else if (m.type === "audio" && m.media_url) {
+    const audio = document.createElement("audio");
+    audio.className = "bubble-audio";
+    audio.controls = true;
+    audio.preload = "none";
+    audio.src = m.media_url;
+    bubble.appendChild(audio);
+    if (m.body) {
+      const cap = document.createElement("div");
+      cap.className = "bubble-text";
+      cap.textContent = m.body;
+      bubble.appendChild(cap);
+    }
+  } else if (m.type === "video" && m.media_url) {
+    const video = document.createElement("video");
+    video.className = "bubble-video";
+    video.controls = true;
+    video.preload = "metadata";
+    video.src = m.media_url;
+    bubble.appendChild(video);
+    if (m.body) {
+      const cap = document.createElement("div");
+      cap.className = "bubble-text";
+      cap.textContent = m.body;
+      bubble.appendChild(cap);
+    }
   } else {
     const text = document.createElement("div");
     text.className = "bubble-text";

@@ -167,6 +167,12 @@ def create_app(db_path: Path) -> FastAPI:
         path, mime = _resolve_image(get_conn, message_id)
         return FileResponse(path, media_type=mime)
 
+    @app.get("/api/media/{message_id}")
+    def api_media(message_id: int, _: None = Depends(require_auth)) -> FileResponse:
+        """Serve any media file (image, audio, video) for a message."""
+        path, mime = _resolve_media(get_conn, message_id)
+        return FileResponse(path, media_type=mime)
+
     @app.get("/api/thumb/{message_id}")
     def api_thumb(
         message_id: int,
@@ -208,6 +214,14 @@ def _hit_dict(h) -> dict:
             "mime_type": h.mime_type,
             "thumb_url": f"/api/thumb/{h.id}",
             "photo_url": f"/api/photo/{h.id}",
+            "media_url": f"/api/media/{h.id}",
+        })
+    elif h.type in ("audio", "video"):
+        d.update({
+            "filename": h.filename,
+            "file_size": h.file_size,
+            "mime_type": h.mime_type,
+            "media_url": f"/api/media/{h.id}",
         })
     return d
 
@@ -228,6 +242,26 @@ def _resolve_image(get_conn, message_id: int) -> tuple[Path, str]:
     p = Path(row["absolute_path"])
     if not p.is_file():
         raise HTTPException(status_code=410, detail="Image file missing on disk")
+    return p, row["mime_type"] or "application/octet-stream"
+
+
+def _resolve_media(get_conn, message_id: int) -> tuple[Path, str]:
+    """Like _resolve_image but accepts any type with a media file."""
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT absolute_path, mime_type, type FROM messages WHERE id = ?",
+            (message_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if not row["absolute_path"]:
+        raise HTTPException(status_code=404, detail="Message has no media")
+    p = Path(row["absolute_path"])
+    if not p.is_file():
+        raise HTTPException(status_code=410, detail="Media file missing on disk")
     return p, row["mime_type"] or "application/octet-stream"
 
 

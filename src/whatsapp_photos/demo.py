@@ -1,18 +1,20 @@
 """Synthetic dataset for trying the viewer without real WhatsApp data.
 
 This is the "show me what it looks like" path: a self-contained set of
-twelve made-up photos (colored panels with their label drawn in) across
-five chats, with realistic captions, dates, senders, and a mix of 1-on-1
-and group conversations. ``wa-photos demo`` builds it, ingests it, and
-serves the viewer in one go — useful before you've extracted your real
+photos, text messages, and voice notes across five chats, with
+realistic captions, dates, senders, and a mix of 1-on-1 and group
+conversations. ``wa-photos demo`` builds it, ingests it, and serves
+the viewer in one go — useful before you've extracted your real
 backup, and as a smoke test of an install.
 
 Nothing here is real. The chats and senders are illustrative.
 """
 from __future__ import annotations
 
+import math
 import shutil
 import sqlite3
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -152,6 +154,33 @@ class _DemoText:
     body: str
 
 
+@dataclass(frozen=True)
+class _DemoAudio:
+    chat_jid: str
+    chat_name: str
+    is_group: bool
+    sender_jid: str | None
+    sender_name: str | None
+    is_from_me: bool
+    taken_unix: int
+    filename: str
+    tone_hz: int = 440
+    duration_s: float = 1.5
+
+
+_DEMO_AUDIOS: tuple[_DemoAudio, ...] = (
+    _DemoAudio("alice@s.whatsapp.net", "Alice Chen", False,
+               "alice@s.whatsapp.net", "Alice", False,
+               1714003150, "voice-alice-1.wav", tone_hz=440, duration_s=2.0),
+    _DemoAudio("beach-trip@g.us", "Beach Trip 2024", True,
+               "dan@s.whatsapp.net", "Dan", False,
+               1715040250, "voice-dan-beach.wav", tone_hz=523, duration_s=1.5),
+    _DemoAudio("eve@s.whatsapp.net", "Eve Rodriguez", False,
+               None, None, True,
+               1715817550, "voice-me-hike.wav", tone_hz=349, duration_s=1.2),
+)
+
+
 _DEMO_TEXTS: tuple[_DemoText, ...] = (
     _DemoText("alice@s.whatsapp.net", "Alice Chen", False,
               "alice@s.whatsapp.net", "Alice", False,
@@ -208,6 +237,9 @@ def build_demo_fixture(root: Path) -> tuple[Path, Path]:
     for photo in _DEMO_PHOTOS:
         rel = f"Message/Media/{photo.chat_jid}/{photo.filename}"
         _draw_panel(media_root / rel, photo.color, photo.label)
+    for audio in _DEMO_AUDIOS:
+        rel = f"Message/Media/{audio.chat_jid}/{audio.filename}"
+        _write_wav(media_root / rel, audio.tone_hz, audio.duration_s)
 
     conn = sqlite3.connect(chat_db)
     try:
@@ -228,7 +260,7 @@ def build_demo_fixture(root: Path) -> tuple[Path, Path]:
 
 def _populate(conn: sqlite3.Connection) -> None:
     chats: dict[str, int] = {}
-    all_items = list(_DEMO_PHOTOS) + list(_DEMO_TEXTS)
+    all_items = list(_DEMO_PHOTOS) + list(_DEMO_TEXTS) + list(_DEMO_AUDIOS)
     for it in all_items:
         if it.chat_jid in chats:
             continue
@@ -292,6 +324,33 @@ def _populate(conn: sqlite3.Connection) -> None:
             ),
         )
 
+    # Audio messages (voice notes). Same WhatsApp message-type as image
+    # (ZMESSAGETYPE=1 means "has media"); the ingester classifies by file
+    # extension. ZTEXT is NULL because demo voice notes have no caption.
+    for i, a in enumerate(_DEMO_AUDIOS):
+        gm = members.get((a.chat_jid, a.sender_jid)) if a.is_group and a.sender_jid else None
+        cur = conn.execute(
+            "INSERT INTO ZWAMESSAGE (Z_ENT, Z_OPT, ZCHATSESSION, ZGROUPMEMBER, ZISFROMME, "
+            "ZSTANZAID, ZMESSAGEDATE, ZMESSAGETYPE, ZTEXT, ZFROMJID, ZPUSHNAME) "
+            "VALUES (2, 1, ?, ?, ?, ?, ?, 2, NULL, ?, ?)",
+            (
+                chats[a.chat_jid], gm, int(a.is_from_me),
+                f"DEMO_A{i:03d}", unix_to_cocoa(a.taken_unix),
+                a.sender_jid, a.sender_name,
+            ),
+        )
+        msg_pk = cur.lastrowid
+        rel = f"Message/Media/{a.chat_jid}/{a.filename}"
+        cur = conn.execute(
+            "INSERT INTO ZWAMEDIAITEM (Z_ENT, Z_OPT, ZMESSAGE, ZMEDIALOCALPATH, ZFILESIZE) "
+            "VALUES (3, 1, ?, ?, NULL)",
+            (msg_pk, rel),
+        )
+        conn.execute(
+            "UPDATE ZWAMESSAGE SET ZMEDIAITEM = ? WHERE Z_PK = ?",
+            (cur.lastrowid, msg_pk),
+        )
+
 
 def _draw_panel(
     path: Path,
@@ -313,6 +372,27 @@ def _draw_panel(
         font=font,
     )
     image.save(path, "JPEG", quality=85)
+
+
+def _write_wav(
+    path: Path,
+    tone_hz: int,
+    duration_s: float,
+    sample_rate: int = 8000,
+) -> None:
+    """Write a tiny mono 16-bit WAV with a sine tone — playable in browsers."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    n_frames = int(sample_rate * duration_s)
+    frames = bytearray()
+    amplitude = 12000  # below clipping
+    for i in range(n_frames):
+        v = int(amplitude * math.sin(2 * math.pi * tone_hz * i / sample_rate))
+        frames.extend(v.to_bytes(2, byteorder="little", signed=True))
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sample_rate)
+        w.writeframes(bytes(frames))
 
 
 def _load_label_font() -> ImageFont.ImageFont:

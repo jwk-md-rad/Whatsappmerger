@@ -46,6 +46,8 @@ def _parser() -> argparse.ArgumentParser:
     ing.add_argument("--no-gifs", action="store_true", help="Skip animated GIFs")
     ing.add_argument("--no-text", action="store_true",
                      help="Index only image messages, skip text-only messages")
+    ing.add_argument("--no-audio", action="store_true", help="Skip voice notes / audio files")
+    ing.add_argument("--no-video", action="store_true", help="Skip video files")
     ing.add_argument("--sha256", action="store_true", help="Compute SHA-256 per file (slower)")
     ing.add_argument(
         "--password",
@@ -84,7 +86,8 @@ def _parser() -> argparse.ArgumentParser:
     s.add_argument("query", nargs="?", default=None)
     s.add_argument("--chat-id", type=int)
     s.add_argument("--sender")
-    s.add_argument("--type", choices=["text", "image"], help="Limit to text or image messages")
+    s.add_argument("--type", choices=["text", "image", "audio", "video"],
+                   help="Limit to one message type")
     s.add_argument("--since", help="YYYY-MM-DD")
     s.add_argument("--until", help="YYYY-MM-DD")
     s.add_argument("--limit", type=int, default=20)
@@ -119,6 +122,8 @@ def _cmd_ingest(args) -> int:
         include_stickers=args.include_stickers,
         include_gifs=not args.no_gifs,
         include_text=not args.no_text,
+        include_audio=not args.no_audio,
+        include_video=not args.no_video,
         compute_sha256=args.sha256,
     )
     report = ingest(args.chat_db, args.media_root, args.output, options=opts)
@@ -126,9 +131,11 @@ def _cmd_ingest(args) -> int:
     print(f"Ingested -> {args.output}")
     print(f"  Images inserted:        {report.images_inserted:,}")
     print(f"  Text messages inserted: {report.texts_inserted:,}")
+    print(f"  Voice notes / audio:    {report.audios_inserted:,}")
+    print(f"  Videos inserted:        {report.videos_inserted:,}")
     print(f"  Chats:                  {report.chats_inserted}")
     print(f"  Skipped (file missing): {report.rows_skipped_missing_file}")
-    print(f"  Skipped (not image):    {report.rows_skipped_not_image}")
+    print(f"  Skipped (unsupported):  {report.rows_skipped_not_image}")
     print(f"  Skipped (unreadable):   {report.rows_skipped_unreadable}")
     print(f"  Media root anchor:      {report.media_root_used}")
     print(f"  Elapsed:                {report.elapsed_seconds:.2f}s")
@@ -279,7 +286,9 @@ def _cmd_search(args) -> int:
         body = (h.body or "").replace("\n", " ")
         if len(body) > 80:
             body = body[:79] + "…"
-        tag = "[IMG]" if h.type == "image" else "[TXT]"
+        tag = {"image": "[IMG]", "text": "[TXT]", "audio": "[AUD]", "video": "[VID]"}.get(
+            h.type, f"[{h.type[:3].upper()}]"
+        )
         print(f"#{h.id:<6} {ts}  {tag}  {sender}  in {chat}  {body}")
     return 0
 

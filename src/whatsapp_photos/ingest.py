@@ -43,12 +43,44 @@ log = logging.getLogger("whatsapp_photos.ingest")
 DEFAULT_PHOTO_FORMATS = {"JPEG", "PNG", "WEBP", "HEIF", "HEIC"}
 ANIMATED_FORMATS = {"GIF"}
 
+# Audio / video classification by file extension. WhatsApp voice notes
+# are .opus inside an Ogg container; iMazing also surfaces .m4a/.mp3
+# for shared audio. Videos are almost always .mp4 from iOS.
+_AUDIO_MIME = {
+    ".opus": "audio/ogg",
+    ".ogg": "audio/ogg",
+    ".m4a": "audio/mp4",
+    ".mp3": "audio/mpeg",
+    ".aac": "audio/aac",
+    ".wav": "audio/wav",
+    ".caf": "audio/x-caf",
+}
+_VIDEO_MIME = {
+    ".mp4": "video/mp4",
+    ".mov": "video/quicktime",
+    ".3gp": "video/3gpp",
+    ".webm": "video/webm",
+    ".mkv": "video/x-matroska",
+}
+
+
+def _classify_media_by_ext(path: Path) -> tuple[str, str] | None:
+    """Return ``(type, mime)`` for an audio/video file, else None."""
+    ext = path.suffix.lower()
+    if ext in _AUDIO_MIME:
+        return "audio", _AUDIO_MIME[ext]
+    if ext in _VIDEO_MIME:
+        return "video", _VIDEO_MIME[ext]
+    return None
+
 
 @dataclass
 class IngestOptions:
     include_gifs: bool = True
     include_stickers: bool = False
     include_text: bool = True
+    include_audio: bool = True
+    include_video: bool = True
     compute_sha256: bool = False
 
 
@@ -56,6 +88,8 @@ class IngestOptions:
 class IngestReport:
     images_inserted: int = 0
     texts_inserted: int = 0
+    audios_inserted: int = 0
+    videos_inserted: int = 0
     rows_skipped_missing_file: int = 0
     rows_skipped_not_image: int = 0
     rows_skipped_unreadable: int = 0
@@ -243,15 +277,25 @@ def _process_row(
         _insert_image(row, abs_path, image_info, chat_cache, dst, options, report)
         return
 
-    # Not an image (or media not usable). Fall back to text if there is a
-    # body, otherwise drop the row.
+    # Not an image but the file is there → try audio / video by extension.
+    if abs_path is not None:
+        media_kind = _classify_media_by_ext(abs_path)
+        if media_kind is not None:
+            kind, mime = media_kind
+            if (kind == "audio" and options.include_audio) or (
+                kind == "video" and options.include_video
+            ):
+                _insert_media(row, abs_path, kind, mime, chat_cache, dst, options, report)
+                return
+
+    # Fall back to text body if available.
     if options.include_text and body and body.strip():
         _insert_text(row, chat_cache, dst, report)
         return
 
-    # Row had unreadable media (e.g. video, audio, doc, expired media) and
-    # no usable text body — skip it.
-    if media_path and image_info is None and abs_path is not None:
+    # Row had unrecognised media (document/sticker, or future format) and
+    # no usable text body — count it as skipped.
+    if media_path and abs_path is not None:
         report.rows_skipped_not_image += 1
     elif not (body and body.strip()):
         report.rows_skipped_empty += 1
@@ -307,6 +351,64 @@ def _insert_image(
     )
     if dst.total_changes:
         report.images_inserted += 1
+
+
+def _insert_media(
+    row: sqlite3.Row,
+    abs_path: Path,
+    kind: str,
+    mime: str,
+    chat_cache: dict[str, int],
+    dst: sqlite3.Connection,
+    options: IngestOptions,
+    report: IngestReport,
+) -> None:
+    """Insert an audio or video message row.
+
+    Body holds the (rare) caption; width/height/sha256 stay NULL — we
+    don't probe duration here to keep the ingest dependency-free.
+    """
+    chat_id = _ensure_chat(dst, chat_cache, row)
+    sender_jid, sender_name = _resolve_sender(row)
+    file_size = abs_path.stat().st_size
+    sha = _sha256(abs_path) if options.compute_sha256 else None
+
+    dst.execute(
+        """
+        INSERT OR IGNORE INTO messages (
+            chat_id, chat_jid, chat_name, is_group,
+            sender_jid, sender_name, is_from_me,
+            stanza_id, sent_at,
+            type, body,
+            media_path, absolute_path, filename,
+            file_size, sha256, mime_type
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            chat_id,
+            row["chat_jid"],
+            row["chat_name"],
+            1 if (row["session_type"] or 0) == 1 else 0,
+            sender_jid,
+            sender_name,
+            int(row["is_from_me"] or 0),
+            row["stanza_id"],
+            cocoa_to_unix(row["msg_date_cocoa"]),
+            kind,
+            row["body"],
+            row["media_path"],
+            str(abs_path),
+            abs_path.name,
+            file_size,
+            sha,
+            mime,
+        ),
+    )
+    if dst.total_changes:
+        if kind == "audio":
+            report.audios_inserted += 1
+        elif kind == "video":
+            report.videos_inserted += 1
 
 
 def _insert_text(
