@@ -26,7 +26,7 @@ def test_index_renders(tmp_path: Path) -> None:
     client = TestClient(app)
     r = client.get("/")
     assert r.status_code == 200
-    assert "WhatsApp Photo Archive" in r.text
+    assert "WhatsApp Archive" in r.text
 
 
 def test_search_endpoint(tmp_path: Path) -> None:
@@ -38,15 +38,29 @@ def test_search_endpoint(tmp_path: Path) -> None:
     data = r.json()
     assert data["total"] == 2
     assert len(data["results"]) == 2
-    assert all("thumb_url" in h for h in data["results"])
+    # Both pizza hits are images (Alice + Carol's captions) — they have
+    # thumb_url. Text-only hits wouldn't.
+    assert all(h.get("thumb_url") for h in data["results"])
+
+
+def test_search_returns_text_messages(tmp_path: Path) -> None:
+    db = _ingested_db(tmp_path)
+    app = create_app(db)
+    client = TestClient(app)
+    r = client.get("/api/search", params={"q": "sunscreen"})
+    data = r.json()
+    assert data["total"] == 1
+    hit = data["results"][0]
+    assert hit["type"] == "text"
+    assert "thumb_url" not in hit
+    assert hit["body"] == "anyone bringing sunscreen?"
 
 
 def test_thumb_endpoint_generates(tmp_path: Path) -> None:
     db = _ingested_db(tmp_path)
     app = create_app(db)
     client = TestClient(app)
-    # Get any photo id
-    r = client.get("/api/search", params={"limit": 1})
+    r = client.get("/api/search", params={"limit": 60, "type": "image"})
     pid = r.json()["results"][0]["id"]
     t = client.get(f"/api/thumb/{pid}", params={"size": 96})
     assert t.status_code == 200
@@ -58,11 +72,21 @@ def test_photo_endpoint_serves_original(tmp_path: Path) -> None:
     db = _ingested_db(tmp_path)
     app = create_app(db)
     client = TestClient(app)
-    r = client.get("/api/search", params={"limit": 1})
+    r = client.get("/api/search", params={"limit": 60, "type": "image"})
     pid = r.json()["results"][0]["id"]
     p = client.get(f"/api/photo/{pid}")
     assert p.status_code == 200
     assert p.headers["content-type"].startswith("image/")
+
+
+def test_photo_endpoint_404_for_text(tmp_path: Path) -> None:
+    db = _ingested_db(tmp_path)
+    app = create_app(db)
+    client = TestClient(app)
+    r = client.get("/api/search", params={"limit": 60, "type": "text"})
+    tid = r.json()["results"][0]["id"]
+    p = client.get(f"/api/photo/{tid}")
+    assert p.status_code == 404
 
 
 def test_chats_and_senders_endpoints(tmp_path: Path) -> None:

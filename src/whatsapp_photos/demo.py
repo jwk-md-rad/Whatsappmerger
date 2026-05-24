@@ -140,6 +140,46 @@ _DEMO_PHOTOS: tuple[_DemoPhoto, ...] = (
 PHOTO_COUNT = len(_DEMO_PHOTOS)
 
 
+@dataclass(frozen=True)
+class _DemoText:
+    chat_jid: str
+    chat_name: str
+    is_group: bool
+    sender_jid: str | None
+    sender_name: str | None
+    is_from_me: bool
+    taken_unix: int
+    body: str
+
+
+_DEMO_TEXTS: tuple[_DemoText, ...] = (
+    _DemoText("alice@s.whatsapp.net", "Alice Chen", False,
+              "alice@s.whatsapp.net", "Alice", False,
+              1714003000, "are you free for dinner tonight?"),
+    _DemoText("alice@s.whatsapp.net", "Alice Chen", False,
+              None, None, True,
+              1714003100, "yes, the pizza place around the corner works"),
+    _DemoText("bob@s.whatsapp.net", "Bob Patel", False,
+              "bob@s.whatsapp.net", "Bob", False,
+              1714521500, "we got the house!! moving in next month"),
+    _DemoText("beach-trip@g.us", "Beach Trip 2024", True,
+              "carol@s.whatsapp.net", "Carol", False,
+              1715040100, "who's bringing sunscreen and towels?"),
+    _DemoText("beach-trip@g.us", "Beach Trip 2024", True,
+              "dan@s.whatsapp.net", "Dan", False,
+              1715040200, "i'll bring the cooler and drinks"),
+    _DemoText("family@g.us", "Family Group", True,
+              "mom@s.whatsapp.net", "Mom", False,
+              1715471900, "grandpa's party starts at 4pm don't be late"),
+    _DemoText("eve@s.whatsapp.net", "Eve Rodriguez", False,
+              None, None, True,
+              1715817500, "thanks for the recommendation, the hike was great"),
+    _DemoText("eve@s.whatsapp.net", "Eve Rodriguez", False,
+              "eve@s.whatsapp.net", "Eve", False,
+              1715903900, "here's that recipe i mentioned"),
+)
+
+
 # Cross-OS candidate fonts for the label baked into each demo photo.
 _LABEL_FONTS = (
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -188,30 +228,32 @@ def build_demo_fixture(root: Path) -> tuple[Path, Path]:
 
 def _populate(conn: sqlite3.Connection) -> None:
     chats: dict[str, int] = {}
-    for p in _DEMO_PHOTOS:
-        if p.chat_jid in chats:
+    all_items = list(_DEMO_PHOTOS) + list(_DEMO_TEXTS)
+    for it in all_items:
+        if it.chat_jid in chats:
             continue
         cur = conn.execute(
             "INSERT INTO ZWACHATSESSION (Z_ENT, Z_OPT, ZCONTACTJID, ZSESSIONTYPE, ZPARTNERNAME) "
             "VALUES (1, 1, ?, ?, ?)",
-            (p.chat_jid, 1 if p.is_group else 0, p.chat_name),
+            (it.chat_jid, 1 if it.is_group else 0, it.chat_name),
         )
-        chats[p.chat_jid] = cur.lastrowid
+        chats[it.chat_jid] = cur.lastrowid
 
     members: dict[tuple[str, str], int] = {}
-    for p in _DEMO_PHOTOS:
-        if not p.is_group or not p.sender_jid:
+    for it in all_items:
+        if not it.is_group or not it.sender_jid:
             continue
-        key = (p.chat_jid, p.sender_jid)
+        key = (it.chat_jid, it.sender_jid)
         if key in members:
             continue
         cur = conn.execute(
             "INSERT INTO ZWAGROUPMEMBER (Z_ENT, Z_OPT, ZCHATSESSION, ZMEMBERJID, ZCONTACTNAME) "
             "VALUES (4, 1, ?, ?, ?)",
-            (chats[p.chat_jid], p.sender_jid, p.sender_name),
+            (chats[it.chat_jid], it.sender_jid, it.sender_name),
         )
         members[key] = cur.lastrowid
 
+    # Photo messages (with attached media).
     for i, p in enumerate(_DEMO_PHOTOS):
         gm = members.get((p.chat_jid, p.sender_jid)) if p.is_group and p.sender_jid else None
         cur = conn.execute(
@@ -219,14 +261,9 @@ def _populate(conn: sqlite3.Connection) -> None:
             "ZSTANZAID, ZMESSAGEDATE, ZMESSAGETYPE, ZTEXT, ZFROMJID, ZPUSHNAME) "
             "VALUES (2, 1, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
             (
-                chats[p.chat_jid],
-                gm,
-                int(p.is_from_me),
-                f"DEMO{i:03d}",
-                unix_to_cocoa(p.taken_unix),
-                p.caption,
-                p.sender_jid,
-                p.sender_name,
+                chats[p.chat_jid], gm, int(p.is_from_me),
+                f"DEMO_P{i:03d}", unix_to_cocoa(p.taken_unix),
+                p.caption, p.sender_jid, p.sender_name,
             ),
         )
         msg_pk = cur.lastrowid
@@ -239,6 +276,20 @@ def _populate(conn: sqlite3.Connection) -> None:
         conn.execute(
             "UPDATE ZWAMESSAGE SET ZMEDIAITEM = ? WHERE Z_PK = ?",
             (cur.lastrowid, msg_pk),
+        )
+
+    # Text-only messages (no media attached).
+    for i, t in enumerate(_DEMO_TEXTS):
+        gm = members.get((t.chat_jid, t.sender_jid)) if t.is_group and t.sender_jid else None
+        conn.execute(
+            "INSERT INTO ZWAMESSAGE (Z_ENT, Z_OPT, ZCHATSESSION, ZGROUPMEMBER, ZISFROMME, "
+            "ZSTANZAID, ZMESSAGEDATE, ZMESSAGETYPE, ZTEXT, ZFROMJID, ZPUSHNAME) "
+            "VALUES (2, 1, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
+            (
+                chats[t.chat_jid], gm, int(t.is_from_me),
+                f"DEMO_T{i:03d}", unix_to_cocoa(t.taken_unix),
+                t.body, t.sender_jid, t.sender_name,
+            ),
         )
 
 

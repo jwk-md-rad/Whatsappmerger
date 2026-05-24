@@ -1,4 +1,4 @@
-"""FastAPI web viewer for the photo database.
+"""FastAPI web viewer for the WhatsApp archive database.
 
 Localhost-only by default. If a password has been set on the database, all
 endpoints are gated behind HTTP Basic Auth that validates against the
@@ -19,10 +19,10 @@ from fastapi.templating import Jinja2Templates
 from . import auth as auth_mod
 from .search import (
     SearchFilters,
-    count_photos,
+    count_messages,
     list_chats,
     list_senders,
-    search_photos,
+    search_messages,
 )
 from .thumbs import ensure_thumb
 
@@ -38,7 +38,7 @@ def create_app(db_path: Path) -> FastAPI:
         raise FileNotFoundError(db_path)
     cache_dir = db_path.parent / f"{db_path.stem}.thumbs"
 
-    app = FastAPI(title="WhatsApp Photo Archive")
+    app = FastAPI(title="WhatsApp Archive")
     templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
@@ -62,7 +62,7 @@ def create_app(db_path: Path) -> FastAPI:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Authentication required",
-                    headers={"WWW-Authenticate": 'Basic realm="WhatsApp Photo Archive"'},
+                    headers={"WWW-Authenticate": 'Basic realm="WhatsApp Archive"'},
                 )
         finally:
             conn.close()
@@ -72,7 +72,7 @@ def create_app(db_path: Path) -> FastAPI:
         return templates.TemplateResponse(
             request=request,
             name="index.html",
-            context={"title": "WhatsApp Photo Archive"},
+            context={"title": "WhatsApp Archive"},
         )
 
     @app.get("/api/search")
@@ -80,6 +80,7 @@ def create_app(db_path: Path) -> FastAPI:
         q: str | None = None,
         chat_id: int | None = None,
         sender: str | None = None,
+        type: str | None = None,
         is_group: bool | None = None,
         is_from_me: bool | None = None,
         since: int | None = None,
@@ -95,6 +96,7 @@ def create_app(db_path: Path) -> FastAPI:
                 query=q,
                 chat_id=chat_id,
                 sender_jid=sender,
+                type=type,
                 is_group=is_group,
                 is_from_me=is_from_me,
                 since_unix=since,
@@ -102,8 +104,8 @@ def create_app(db_path: Path) -> FastAPI:
                 limit=limit,
                 offset=offset,
             )
-            total = count_photos(conn, filters)
-            hits = search_photos(conn, filters, order_by=order)
+            total = count_messages(conn, filters)
+            hits = search_messages(conn, filters, order_by=order)
         finally:
             conn.close()
         return JSONResponse(
@@ -130,19 +132,19 @@ def create_app(db_path: Path) -> FastAPI:
         finally:
             conn.close()
 
-    @app.get("/api/photo/{photo_id}")
-    def api_photo(photo_id: int, _: None = Depends(require_auth)) -> FileResponse:
-        path, mime = _resolve_photo(get_conn, photo_id)
+    @app.get("/api/photo/{message_id}")
+    def api_photo(message_id: int, _: None = Depends(require_auth)) -> FileResponse:
+        path, mime = _resolve_image(get_conn, message_id)
         return FileResponse(path, media_type=mime)
 
-    @app.get("/api/thumb/{photo_id}")
+    @app.get("/api/thumb/{message_id}")
     def api_thumb(
-        photo_id: int,
+        message_id: int,
         size: int = Query(240, ge=64, le=1024),
         _: None = Depends(require_auth),
     ) -> FileResponse:
-        path, _mime = _resolve_photo(get_conn, photo_id)
-        thumb = ensure_thumb(path, cache_dir, photo_id, size=size)
+        path, _mime = _resolve_image(get_conn, message_id)
+        thumb = ensure_thumb(path, cache_dir, message_id, size=size)
         return FileResponse(thumb, media_type="image/jpeg")
 
     return app
@@ -154,7 +156,7 @@ def create_app(db_path: Path) -> FastAPI:
 
 
 def _hit_dict(h) -> dict:
-    return {
+    d = {
         "id": h.id,
         "chat_jid": h.chat_jid,
         "chat_name": h.chat_name,
@@ -162,33 +164,40 @@ def _hit_dict(h) -> dict:
         "sender_jid": h.sender_jid,
         "sender_name": h.sender_name,
         "is_from_me": h.is_from_me,
-        "taken_at": h.taken_at,
-        "filename": h.filename,
-        "file_size": h.file_size,
-        "width": h.width,
-        "height": h.height,
-        "mime_type": h.mime_type,
-        "caption": h.caption,
+        "sent_at": h.sent_at,
+        "type": h.type,
+        "body": h.body,
         "snippet": h.snippet,
-        "thumb_url": f"/api/thumb/{h.id}",
-        "photo_url": f"/api/photo/{h.id}",
     }
+    if h.type == "image":
+        d.update({
+            "filename": h.filename,
+            "file_size": h.file_size,
+            "width": h.width,
+            "height": h.height,
+            "mime_type": h.mime_type,
+            "thumb_url": f"/api/thumb/{h.id}",
+            "photo_url": f"/api/photo/{h.id}",
+        })
+    return d
 
 
-def _resolve_photo(get_conn, photo_id: int) -> tuple[Path, str]:
+def _resolve_image(get_conn, message_id: int) -> tuple[Path, str]:
     conn = get_conn()
     try:
         row = conn.execute(
-            "SELECT absolute_path, mime_type FROM photos WHERE id = ?",
-            (photo_id,),
+            "SELECT absolute_path, mime_type, type FROM messages WHERE id = ?",
+            (message_id,),
         ).fetchone()
     finally:
         conn.close()
     if row is None:
-        raise HTTPException(status_code=404, detail="Photo not found")
+        raise HTTPException(status_code=404, detail="Message not found")
+    if row["type"] != "image" or not row["absolute_path"]:
+        raise HTTPException(status_code=404, detail="Message has no image")
     p = Path(row["absolute_path"])
     if not p.is_file():
-        raise HTTPException(status_code=410, detail="Photo file missing on disk")
+        raise HTTPException(status_code=410, detail="Image file missing on disk")
     return p, row["mime_type"] or "application/octet-stream"
 
 

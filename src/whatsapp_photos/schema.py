@@ -1,9 +1,13 @@
-"""SQLite schema for the searchable photo database.
+"""SQLite schema for the searchable WhatsApp archive database.
 
-One row per photo file. ``photos_fts`` is an FTS5 virtual table mirroring
-the searchable text columns; we keep it as a *contentless* FTS index built
-once after ingest, rather than synchronizing via triggers, because ingest
-is a one-shot batch job.
+One row per message — text or image. ``messages_fts`` is an FTS5 virtual
+table mirroring the searchable text columns; we keep it as a *contentless*
+FTS index built once after ingest, rather than synchronizing via triggers,
+because ingest is a one-shot batch job.
+
+Phase B scope: text + image. Other media types (video, audio, document)
+are not indexed yet and the corresponding rows are skipped at ingest
+time. Adding them later only requires extending ``type``.
 """
 from __future__ import annotations
 
@@ -20,7 +24,7 @@ SCHEMA = [
     )
     """,
     """
-    CREATE TABLE IF NOT EXISTS photos (
+    CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY,
         chat_id INTEGER NOT NULL REFERENCES chats(id),
         chat_jid TEXT NOT NULL,
@@ -30,29 +34,31 @@ SCHEMA = [
         sender_name TEXT,
         is_from_me INTEGER NOT NULL DEFAULT 0,
         stanza_id TEXT,
-        taken_at INTEGER,                -- unix seconds (UTC)
-        media_path TEXT NOT NULL,        -- as recorded in the iOS DB
-        absolute_path TEXT NOT NULL,     -- resolved at ingest
-        filename TEXT NOT NULL,
+        sent_at INTEGER,                 -- unix seconds (UTC)
+        type TEXT NOT NULL,              -- 'text' | 'image'
+        body TEXT,                       -- text body OR image caption
+        media_path TEXT,                 -- as recorded in the iOS DB, NULL for text
+        absolute_path TEXT,              -- resolved at ingest, NULL for text
+        filename TEXT,                   -- NULL for text
         file_size INTEGER,
         sha256 TEXT,
         width INTEGER,
         height INTEGER,
         mime_type TEXT,
-        caption TEXT,
-        UNIQUE (media_path, stanza_id)
+        UNIQUE (stanza_id, type, media_path)
     )
     """,
-    "CREATE INDEX IF NOT EXISTS photos_taken_at ON photos (taken_at)",
-    "CREATE INDEX IF NOT EXISTS photos_chat_id ON photos (chat_id)",
-    "CREATE INDEX IF NOT EXISTS photos_sender ON photos (sender_jid)",
+    "CREATE INDEX IF NOT EXISTS messages_sent_at ON messages (sent_at)",
+    "CREATE INDEX IF NOT EXISTS messages_chat_id ON messages (chat_id)",
+    "CREATE INDEX IF NOT EXISTS messages_sender ON messages (sender_jid)",
+    "CREATE INDEX IF NOT EXISTS messages_type ON messages (type)",
     """
-    CREATE VIRTUAL TABLE IF NOT EXISTS photos_fts USING fts5(
-        caption,
+    CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+        body,
         sender_name,
         chat_name,
         filename,
-        content='photos',
+        content='messages',
         content_rowid='id',
         tokenize='unicode61 remove_diacritics 2'
     )
@@ -67,9 +73,9 @@ def init_schema(conn: sqlite3.Connection) -> None:
 
 
 def rebuild_fts(conn: sqlite3.Connection) -> None:
-    """Repopulate the FTS index from photos.
+    """Repopulate the FTS index from messages.
 
     Cheaper than maintaining triggers during a batch ingest.
     """
-    conn.execute("INSERT INTO photos_fts(photos_fts) VALUES ('rebuild')")
+    conn.execute("INSERT INTO messages_fts(messages_fts) VALUES ('rebuild')")
     conn.commit()

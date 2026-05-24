@@ -68,6 +68,7 @@ function currentFilters() {
     q: fd.get("q") || "",
     chat_id: fd.get("chat_id") || "",
     sender: fd.get("sender") || "",
+    type: fd.get("type") || "",
     since: fd.get("since") || "",
     until: fd.get("until") || "",
     order: fd.get("order") || "newest",
@@ -75,7 +76,7 @@ function currentFilters() {
 }
 
 function hasAnyFilter(f) {
-  return Boolean(f.q || f.chat_id || f.sender || f.since || f.until);
+  return Boolean(f.q || f.chat_id || f.sender || f.type || f.since || f.until);
 }
 
 function buildQuery(reset) {
@@ -84,6 +85,7 @@ function buildQuery(reset) {
   if (f.q) params.set("q", f.q);
   if (f.chat_id) params.set("chat_id", f.chat_id);
   if (f.sender) params.set("sender", f.sender);
+  if (f.type) params.set("type", f.type);
   const since = dateToUnix(f.since);
   if (since) params.set("since", since);
   const until = dateToUnix(f.until);
@@ -122,7 +124,7 @@ async function runSearch(reset) {
   }
   renderEmptyState();
   updateBrowseVisibility();
-  statusEl.textContent = `${total} photo${total === 1 ? "" : "s"}`;
+  statusEl.textContent = `${total.toLocaleString()} message${total === 1 ? "" : "s"}`;
   updateDocTitle();
   if (reset) syncUrlFromForm();
 }
@@ -151,7 +153,7 @@ function renderEmptyState() {
 
 function renderCard(hit, index) {
   const card = document.createElement("div");
-  card.className = "card";
+  card.className = "card" + (hit.type === "text" ? " card-text" : " card-image");
   card.tabIndex = 0;
   card.addEventListener("click", (e) => {
     if (e.target.closest(".pivot")) return;
@@ -159,11 +161,23 @@ function renderCard(hit, index) {
   });
   card.addEventListener("keypress", (e) => { if (e.key === "Enter") openLightbox(index); });
 
-  const img = document.createElement("img");
-  img.loading = "lazy";
-  img.src = hit.thumb_url;
-  img.alt = hit.caption || `Photo from ${hit.chat_name || hit.chat_jid}`;
-  card.appendChild(img);
+  if (hit.type === "image") {
+    const img = document.createElement("img");
+    img.loading = "lazy";
+    img.src = hit.thumb_url;
+    img.alt = hit.body || `Photo from ${hit.chat_name || hit.chat_jid}`;
+    card.appendChild(img);
+  } else {
+    // Text bubble takes the place of the image area.
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    if (hit.snippet) {
+      bubble.innerHTML = safeSnippet(hit.snippet);
+    } else {
+      bubble.textContent = hit.body || "";
+    }
+    card.appendChild(bubble);
+  }
 
   const info = document.createElement("div");
   info.className = "info";
@@ -179,21 +193,26 @@ function renderCard(hit, index) {
   info.appendChild(line1);
 
   const line2 = document.createElement("div");
-  line2.textContent = fmtRelDate(hit.taken_at);
-  line2.title = fmtDateFull(hit.taken_at);
+  line2.textContent = fmtRelDate(hit.sent_at);
+  line2.title = fmtDateFull(hit.sent_at);
   info.appendChild(line2);
 
-  if (hit.snippet) {
-    const cap = document.createElement("div");
-    cap.className = "caption";
-    cap.innerHTML = safeSnippet(hit.snippet);
-    info.appendChild(cap);
-  } else if (hit.caption) {
-    const cap = document.createElement("div");
-    cap.className = "caption";
-    cap.textContent = hit.caption;
-    info.appendChild(cap);
+  // For images, show caption snippet beneath the photo (text cards
+  // already use the body as the bubble).
+  if (hit.type === "image") {
+    if (hit.snippet) {
+      const cap = document.createElement("div");
+      cap.className = "caption";
+      cap.innerHTML = safeSnippet(hit.snippet);
+      info.appendChild(cap);
+    } else if (hit.body) {
+      const cap = document.createElement("div");
+      cap.className = "caption";
+      cap.textContent = hit.body;
+      info.appendChild(cap);
+    }
   }
+
   card.appendChild(info);
   return card;
 }
@@ -247,10 +266,24 @@ function appendLoadMore() {
 function openLightbox(index) {
   currentIndex = index;
   const hit = loadedHits[index];
-  fullImg.src = hit.photo_url;
-  const date = fmtDateFull(hit.taken_at);
+  const date = fmtDateFull(hit.sent_at);
   const fromName = hit.is_from_me ? "Me" : (hit.sender_name || hit.sender_jid || "?");
   const chatName = hit.chat_name || hit.chat_jid;
+  const stage = document.querySelector(".lb-stage");
+  const textPanel = document.getElementById("lb-text");
+
+  if (hit.type === "image") {
+    fullImg.src = hit.photo_url;
+    fullImg.hidden = false;
+    textPanel.hidden = true;
+    stage.classList.remove("text-mode");
+  } else {
+    fullImg.src = "";
+    fullImg.hidden = true;
+    textPanel.hidden = false;
+    textPanel.textContent = hit.body || "";
+    stage.classList.add("text-mode");
+  }
 
   meta.innerHTML = "";
   const head = document.createElement("div");
@@ -264,14 +297,19 @@ function openLightbox(index) {
   meta.appendChild(head);
 
   const sub = document.createElement("div");
-  sub.textContent =
-    `${date} · ${hit.width || "?"}×${hit.height || "?"} · ${hit.filename}`;
+  if (hit.type === "image") {
+    sub.textContent =
+      `${date} · ${hit.width || "?"}×${hit.height || "?"} · ${hit.filename}`;
+  } else {
+    sub.textContent = date;
+  }
   meta.appendChild(sub);
 
-  if (hit.caption) {
+  // For image messages, the body acts as caption; show it below.
+  if (hit.type === "image" && hit.body) {
     const c = document.createElement("div");
     c.className = "caption-full";
-    c.textContent = hit.caption;
+    c.textContent = hit.body;
     meta.appendChild(c);
   }
 
@@ -280,7 +318,6 @@ function openLightbox(index) {
   nav.textContent = `${index + 1} of ${loadedHits.length}${total > loadedHits.length ? ` (${total} total)` : ""}`;
   meta.appendChild(nav);
 
-  // Enable/disable nav arrows
   const prev = document.getElementById("lb-prev");
   const next = document.getElementById("lb-next");
   prev.disabled = index === 0;
@@ -543,6 +580,7 @@ function syncUrlFromForm() {
   if (f.q) params.set("q", f.q);
   if (f.chat_id) params.set("chat_id", f.chat_id);
   if (f.sender) params.set("sender", f.sender);
+  if (f.type) params.set("type", f.type);
   if (f.since) params.set("since", f.since);
   if (f.until) params.set("until", f.until);
   if (f.order && f.order !== "newest") params.set("order", f.order);
@@ -556,6 +594,7 @@ function applyUrlToForm() {
   const q = url.searchParams.get("q") || "";
   const chat_id = url.searchParams.get("chat_id") || "";
   const sender = url.searchParams.get("sender") || "";
+  const type = url.searchParams.get("type") || "";
   const since = url.searchParams.get("since") || "";
   const until = url.searchParams.get("until") || "";
   const order = url.searchParams.get("order") || "newest";
@@ -564,6 +603,7 @@ function applyUrlToForm() {
   form.querySelector("input[name=since]").value = since;
   form.querySelector("input[name=until]").value = until;
   form.querySelector("select[name=order]").value = order;
+  form.querySelector("select[name=type]").value = type;
 
   if (chat_id) setComboboxValue("chat", chat_id);
   if (sender) setComboboxValue("sender", sender);
@@ -629,6 +669,10 @@ async function loadFilterOptions() {
 for (const cbEl of document.querySelectorAll(".combobox")) setupCombobox(cbEl);
 
 form.addEventListener("submit", (e) => { e.preventDefault(); runSearch(true); });
+
+// Type filter is a regular select — submit immediately on change.
+form.querySelector("select[name=type]").addEventListener("change", () => runSearch(true));
+form.querySelector("select[name=order]").addEventListener("change", () => runSearch(true));
 
 loadFilterOptions().then(() => {
   applyUrlToForm();

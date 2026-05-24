@@ -16,26 +16,27 @@ def _q(db: Path, sql: str, params: tuple = ()) -> list[tuple]:
         c.close()
 
 
-def test_ingest_skips_missing_and_non_image(tmp_path: Path) -> None:
+def test_ingest_counts_by_type(tmp_path: Path) -> None:
     chat_db, media_root = build_fixture(tmp_path)
-    out = tmp_path / "photos.db"
+    out = tmp_path / "archive.db"
     report = ingest(chat_db, media_root, out)
 
-    # 3 real photos, 1 missing file, 1 non-image
-    assert report.photos_inserted == 3
-    assert report.rows_skipped_missing_file == 1
-    assert report.rows_skipped_unreadable == 1 or report.rows_skipped_not_image == 1
+    # 3 real images, plus text messages: 2 fallbacks from media that
+    # wasn't an image (missing file + non-image file) and 2 pure-text
+    # messages added in the fixture.
+    assert report.images_inserted == 3
+    assert report.texts_inserted == 4
 
 
 def test_ingest_resolves_metadata(tmp_path: Path) -> None:
     chat_db, media_root = build_fixture(tmp_path)
-    out = tmp_path / "photos.db"
+    out = tmp_path / "archive.db"
     ingest(chat_db, media_root, out)
 
     rows = _q(
         out,
-        "SELECT chat_jid, sender_name, is_from_me, caption, width, height, mime_type, "
-        "filename FROM photos ORDER BY taken_at",
+        "SELECT chat_jid, sender_name, is_from_me, body, width, height, mime_type, "
+        "filename FROM messages WHERE type = 'image' ORDER BY sent_at",
     )
     # Alice's pizza photo
     assert rows[0][0] == "111@s.whatsapp.net"
@@ -55,46 +56,79 @@ def test_ingest_resolves_metadata(tmp_path: Path) -> None:
     assert rows[2][0] == "333-group@g.us"
 
 
+def test_ingest_text_messages(tmp_path: Path) -> None:
+    chat_db, media_root = build_fixture(tmp_path)
+    out = tmp_path / "archive.db"
+    ingest(chat_db, media_root, out)
+
+    rows = _q(
+        out,
+        "SELECT chat_jid, sender_name, body, media_path FROM messages "
+        "WHERE type = 'text' ORDER BY sent_at",
+    )
+    # 4 text messages: Alice's missing-file fallback, Dave's non-image
+    # fallback, plus the two pure-text messages.
+    assert len(rows) == 4
+    assert all(r[3] is None for r in rows)  # text messages have no media_path
+    bodies = [r[2] for r in rows]
+    assert "see you at the restaurant tonight" in bodies
+    assert "anyone bringing sunscreen?" in bodies
+
+
 def test_ingest_chats_table(tmp_path: Path) -> None:
     chat_db, media_root = build_fixture(tmp_path)
-    out = tmp_path / "photos.db"
+    out = tmp_path / "archive.db"
     ingest(chat_db, media_root, out)
     chats = _q(out, "SELECT jid, name, is_group FROM chats ORDER BY jid")
-    # Only chats that produced photos appear (Dave's was skipped: non-image)
     jids = {c[0] for c in chats}
+    # All four chats now show up (Dave's appears because his row falls
+    # back to a text message instead of being skipped).
     assert "111@s.whatsapp.net" in jids
     assert "222@s.whatsapp.net" in jids
     assert "333-group@g.us" in jids
+    assert "444@s.whatsapp.net" in jids
     assert ("333-group@g.us", "Beach Trip", 1) in chats
 
 
 def test_ingest_idempotent_via_unique(tmp_path: Path) -> None:
     chat_db, media_root = build_fixture(tmp_path)
-    out = tmp_path / "photos.db"
+    out = tmp_path / "archive.db"
     ingest(chat_db, media_root, out)
     # Re-running should clobber and produce the same row count.
     ingest(chat_db, media_root, out)
-    n = _q(out, "SELECT COUNT(*) FROM photos")[0][0]
-    assert n == 3
+    n = _q(out, "SELECT COUNT(*) FROM messages")[0][0]
+    assert n == 7  # 3 images + 4 texts
 
 
 def test_ingest_sha256_optional(tmp_path: Path) -> None:
     chat_db, media_root = build_fixture(tmp_path)
-    out = tmp_path / "photos.db"
+    out = tmp_path / "archive.db"
     ingest(chat_db, media_root, out, options=IngestOptions(compute_sha256=True))
-    sha_rows = _q(out, "SELECT sha256 FROM photos")
+    sha_rows = _q(out, "SELECT sha256 FROM messages WHERE type = 'image'")
     assert all(len(r[0]) == 64 for r in sha_rows)
 
 
 def test_ingest_fts_index_built(tmp_path: Path) -> None:
     chat_db, media_root = build_fixture(tmp_path)
-    out = tmp_path / "photos.db"
+    out = tmp_path / "archive.db"
     ingest(chat_db, media_root, out)
+    # FTS over body finds both image-captions and text-message bodies.
     rows = _q(
         out,
-        "SELECT photos.id FROM photos JOIN photos_fts ON photos_fts.rowid = photos.id "
-        "WHERE photos_fts MATCH ?",
+        "SELECT messages.id FROM messages "
+        "JOIN messages_fts ON messages_fts.rowid = messages.id "
+        "WHERE messages_fts MATCH ?",
         ('"pizza"*',),
     )
-    # Both Alice's and Carol's captions mention pizza
+    # Alice's caption + Carol's caption mention pizza
     assert len(rows) == 2
+
+    # Text-message body is searchable too.
+    rows = _q(
+        out,
+        "SELECT messages.id FROM messages "
+        "JOIN messages_fts ON messages_fts.rowid = messages.id "
+        "WHERE messages_fts MATCH ?",
+        ('"sunscreen"*',),
+    )
+    assert len(rows) == 1

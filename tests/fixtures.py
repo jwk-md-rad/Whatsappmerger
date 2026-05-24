@@ -163,7 +163,8 @@ def build_fixture(tmp_path: Path) -> tuple[Path, Path]:
             taken_unix=1_700_030_000,
             rel_path="Message/Media/zzz/missing.jpg",
         )
-        # Non-image row
+        # Non-image media: file exists but isn't an image (will fall back
+        # to the text body, so this row becomes a text message).
         _add_msg_with_media(
             conn,
             chat_pk=chat_dave,
@@ -171,9 +172,31 @@ def build_fixture(tmp_path: Path) -> tuple[Path, Path]:
             is_from_me=0,
             from_jid="444@s.whatsapp.net",
             push_name="Dave",
-            text="text file",
+            text="check this file",
             taken_unix=1_700_040_000,
             rel_path="Message/Media/444@s.whatsapp.net/note.txt",
+        )
+        # Pure-text messages (no media at all).
+        _add_msg_text(
+            conn,
+            chat_pk=chat_alice,
+            stanza="STANZA_T_A1",
+            is_from_me=1,
+            from_jid=None,
+            push_name=None,
+            text="see you at the restaurant tonight",
+            taken_unix=1_700_050_000,
+        )
+        _add_msg_text(
+            conn,
+            chat_pk=chat_group,
+            stanza="STANZA_T_G1",
+            is_from_me=0,
+            from_jid="555@s.whatsapp.net",
+            push_name="Carol",
+            text="anyone bringing sunscreen?",
+            taken_unix=1_700_060_000,
+            group_member_pk=carol_pk,
         )
 
         conn.commit()
@@ -199,6 +222,27 @@ def _add_group_member(conn, chat_pk: int, jid: str, name: str) -> int:
         (chat_pk, jid, name),
     )
     return cur.lastrowid
+
+
+def _add_msg_text(
+    conn,
+    *,
+    chat_pk: int,
+    stanza: str,
+    is_from_me: int,
+    from_jid: str | None,
+    push_name: str | None,
+    text: str,
+    taken_unix: int,
+    group_member_pk: int | None = None,
+) -> None:
+    cocoa = unix_to_cocoa(taken_unix)
+    conn.execute(
+        "INSERT INTO ZWAMESSAGE (Z_ENT, Z_OPT, ZCHATSESSION, ZGROUPMEMBER, "
+        "ZISFROMME, ZSTANZAID, ZMESSAGEDATE, ZMESSAGETYPE, ZTEXT, ZFROMJID, ZPUSHNAME) "
+        "VALUES (2, 1, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
+        (chat_pk, group_member_pk, is_from_me, stanza, cocoa, text, from_jid, push_name),
+    )
 
 
 def _add_msg_with_media(

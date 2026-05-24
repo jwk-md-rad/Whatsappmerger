@@ -10,7 +10,7 @@
 <header>
   <h1>{{ title }}</h1>
   <form id="filters">
-    <input type="search" name="q" placeholder="Search captions, sender, chat, filename"
+    <input type="search" name="q" placeholder="Search messages, captions, sender, chat"
            autocomplete="off" autofocus>
     <div class="combobox" data-cb="chat">
       <input type="text" class="cb-input" placeholder="All chats"
@@ -26,6 +26,11 @@
     </div>
     <label class="date-field">From <input type="date" name="since"></label>
     <label class="date-field">Until <input type="date" name="until"></label>
+    <select name="type" aria-label="Message type">
+      <option value="">All types</option>
+      <option value="text">Text only</option>
+      <option value="image">Photos only</option>
+    </select>
     <select name="order" aria-label="Sort order">
       <option value="newest">Newest first</option>
       <option value="oldest">Oldest first</option>
@@ -53,6 +58,7 @@
     <button class="lb-arrow prev" id="lb-prev" aria-label="Previous">&#8249;</button>
     <button class="lb-arrow next" id="lb-next" aria-label="Next">&#8250;</button>
     <img id="full">
+    <div id="lb-text" hidden></div>
   </div>
   <div id="meta"></div>
 </dialog>

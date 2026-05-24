@@ -1,15 +1,18 @@
-"""Ingest photos from a WhatsApp iOS ChatStorage.sqlite + Message/Media tree.
+"""Ingest messages from a WhatsApp iOS ChatStorage.sqlite + Message/Media tree.
 
 Pipeline (one pass):
 
-1. Query ZWAMESSAGE joined to ZWAMEDIAITEM, ZWACHATSESSION, ZWAGROUPMEMBER
-   for every message that has a non-NULL media path.
+1. Query ZWAMESSAGE joined to ZWACHATSESSION, ZWAGROUPMEMBER and (LEFT)
+   ZWAMEDIAITEM. We pull every message that has either a non-empty
+   ``ZTEXT`` body or a ``ZMEDIALOCALPATH`` we can resolve.
 2. Resolve each ``ZMEDIALOCALPATH`` against the user-provided media root.
    We auto-detect the right anchor point by trying a few candidates and
    picking the one that resolves the most paths.
-3. Open the file with Pillow to read width/height/mime; this also serves
-   as the "is it actually an image?" filter.
-4. Insert a row into ``photos``.
+3. Classify each row:
+     - media that opens as an image (Pillow recognises it) → type='image'
+     - otherwise, if body is non-empty → type='text'
+     - otherwise → skipped (videos, audio, documents, expired media, …)
+4. Insert into ``messages``.
 
 After all rows are inserted, the FTS index is rebuilt from scratch.
 
@@ -45,19 +48,27 @@ ANIMATED_FORMATS = {"GIF"}
 class IngestOptions:
     include_gifs: bool = True
     include_stickers: bool = False
+    include_text: bool = True
     compute_sha256: bool = False
 
 
 @dataclass
 class IngestReport:
-    photos_inserted: int = 0
+    images_inserted: int = 0
+    texts_inserted: int = 0
     rows_skipped_missing_file: int = 0
     rows_skipped_not_image: int = 0
     rows_skipped_unreadable: int = 0
+    rows_skipped_empty: int = 0
     chats_inserted: int = 0
     media_root_used: str = ""
     elapsed_seconds: float = 0.0
     warnings: list[str] = field(default_factory=list)
+
+    @property
+    def photos_inserted(self) -> int:
+        """Back-compat alias for callers still reading the old field name."""
+        return self.images_inserted
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +83,7 @@ def ingest(
     *,
     options: IngestOptions | None = None,
 ) -> IngestReport:
-    """Build a searchable photo database from an iOS WhatsApp backup.
+    """Build a searchable message database from an iOS WhatsApp backup.
 
     ``chat_db`` is the extracted ``ChatStorage.sqlite``; ``media_root`` is
     the directory that contains the WhatsApp media tree (typically the
@@ -102,7 +113,7 @@ def ingest(
         log.info("Resolved media root anchor: %s", anchor)
 
         chat_cache: dict[str, int] = {}
-        for row in _iter_media_rows(src):
+        for row in _iter_message_rows(src):
             _process_row(row, anchor, chat_cache, dst, options, report)
 
         rebuild_fts(dst)
@@ -144,7 +155,6 @@ def _detect_media_anchor(src: sqlite3.Connection, root: Path) -> Path:
         p = root / sub
         if p.exists():
             candidates.append(p)
-    # If a sample path starts with a known segment, also try stripping it.
     for path in sample[:5]:
         parts = Path(path).parts
         if parts and (root / "/".join(parts[1:])).parent.exists():
@@ -163,15 +173,16 @@ def _detect_media_anchor(src: sqlite3.Connection, root: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 
-_MEDIA_QUERY = """
+_MESSAGE_QUERY = """
 SELECT
     msg.Z_PK            AS msg_pk,
     msg.ZSTANZAID       AS stanza_id,
     msg.ZISFROMME       AS is_from_me,
     msg.ZMESSAGEDATE    AS msg_date_cocoa,
-    msg.ZTEXT           AS caption,
+    msg.ZTEXT           AS body,
     msg.ZFROMJID        AS from_jid,
     msg.ZPUSHNAME       AS push_name,
+    msg.ZMESSAGETYPE    AS raw_type,
     chat.Z_PK           AS chat_pk,
     chat.ZCONTACTJID    AS chat_jid,
     chat.ZSESSIONTYPE   AS session_type,
@@ -181,16 +192,17 @@ SELECT
     media.ZMEDIALOCALPATH AS media_path,
     media.ZFILESIZE     AS file_size_db
 FROM ZWAMESSAGE msg
-JOIN ZWAMEDIAITEM media ON media.ZMESSAGE = msg.Z_PK
 JOIN ZWACHATSESSION chat ON chat.Z_PK = msg.ZCHATSESSION
+LEFT JOIN ZWAMEDIAITEM media ON media.ZMESSAGE = msg.Z_PK
 LEFT JOIN ZWAGROUPMEMBER gm ON gm.Z_PK = msg.ZGROUPMEMBER
 WHERE media.ZMEDIALOCALPATH IS NOT NULL
+   OR (msg.ZTEXT IS NOT NULL AND length(msg.ZTEXT) > 0)
 """
 
 
-def _iter_media_rows(src: sqlite3.Connection) -> Iterator[sqlite3.Row]:
+def _iter_message_rows(src: sqlite3.Connection) -> Iterator[sqlite3.Row]:
     src.row_factory = sqlite3.Row
-    yield from src.execute(_MEDIA_QUERY)
+    yield from src.execute(_MESSAGE_QUERY)
 
 
 # ---------------------------------------------------------------------------
@@ -207,41 +219,69 @@ def _process_row(
     report: IngestReport,
 ) -> None:
     media_path = row["media_path"]
-    abs_path = (anchor / media_path).resolve()
+    body = row["body"]
 
-    if not abs_path.is_file():
-        report.rows_skipped_missing_file += 1
+    abs_path: Path | None = None
+    image_info: tuple[str, str, int | None, int | None] | None = None
+
+    if media_path:
+        abs_path = (anchor / media_path).resolve()
+        if not abs_path.is_file():
+            report.rows_skipped_missing_file += 1
+            abs_path = None
+        else:
+            image_info = _probe_image(abs_path)
+            if image_info is not None:
+                fmt = image_info[0]
+                ok = fmt in DEFAULT_PHOTO_FORMATS or (
+                    fmt in ANIMATED_FORMATS and options.include_gifs
+                )
+                if not ok:
+                    image_info = None
+
+    if image_info is not None and abs_path is not None:
+        _insert_image(row, abs_path, image_info, chat_cache, dst, options, report)
         return
 
-    info = _probe_image(abs_path)
-    if info is None:
-        report.rows_skipped_unreadable += 1
+    # Not an image (or media not usable). Fall back to text if there is a
+    # body, otherwise drop the row.
+    if options.include_text and body and body.strip():
+        _insert_text(row, chat_cache, dst, report)
         return
-    fmt, mime, w, h = info
 
-    if fmt in ANIMATED_FORMATS and not options.include_gifs:
+    # Row had unreadable media (e.g. video, audio, doc, expired media) and
+    # no usable text body — skip it.
+    if media_path and image_info is None and abs_path is not None:
         report.rows_skipped_not_image += 1
-        return
-    if fmt not in DEFAULT_PHOTO_FORMATS and fmt not in ANIMATED_FORMATS:
-        report.rows_skipped_not_image += 1
-        return
+    elif not (body and body.strip()):
+        report.rows_skipped_empty += 1
 
+
+def _insert_image(
+    row: sqlite3.Row,
+    abs_path: Path,
+    image_info: tuple[str, str, int | None, int | None],
+    chat_cache: dict[str, int],
+    dst: sqlite3.Connection,
+    options: IngestOptions,
+    report: IngestReport,
+) -> None:
+    fmt, mime, w, h = image_info
     chat_id = _ensure_chat(dst, chat_cache, row)
-
     sender_jid, sender_name = _resolve_sender(row)
-
     file_size = abs_path.stat().st_size
     sha = _sha256(abs_path) if options.compute_sha256 else None
 
     dst.execute(
         """
-        INSERT OR IGNORE INTO photos (
+        INSERT OR IGNORE INTO messages (
             chat_id, chat_jid, chat_name, is_group,
             sender_jid, sender_name, is_from_me,
-            stanza_id, taken_at,
+            stanza_id, sent_at,
+            type, body,
             media_path, absolute_path, filename,
-            file_size, sha256, width, height, mime_type, caption
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            file_size, sha256, width, height, mime_type
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
             chat_id,
@@ -253,7 +293,9 @@ def _process_row(
             int(row["is_from_me"] or 0),
             row["stanza_id"],
             cocoa_to_unix(row["msg_date_cocoa"]),
-            media_path,
+            "image",
+            row["body"],
+            row["media_path"],
             str(abs_path),
             abs_path.name,
             file_size,
@@ -261,11 +303,46 @@ def _process_row(
             w,
             h,
             mime,
-            row["caption"],
         ),
     )
     if dst.total_changes:
-        report.photos_inserted += 1
+        report.images_inserted += 1
+
+
+def _insert_text(
+    row: sqlite3.Row,
+    chat_cache: dict[str, int],
+    dst: sqlite3.Connection,
+    report: IngestReport,
+) -> None:
+    chat_id = _ensure_chat(dst, chat_cache, row)
+    sender_jid, sender_name = _resolve_sender(row)
+
+    dst.execute(
+        """
+        INSERT OR IGNORE INTO messages (
+            chat_id, chat_jid, chat_name, is_group,
+            sender_jid, sender_name, is_from_me,
+            stanza_id, sent_at,
+            type, body
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            chat_id,
+            row["chat_jid"],
+            row["chat_name"],
+            1 if (row["session_type"] or 0) == 1 else 0,
+            sender_jid,
+            sender_name,
+            int(row["is_from_me"] or 0),
+            row["stanza_id"],
+            cocoa_to_unix(row["msg_date_cocoa"]),
+            "text",
+            row["body"],
+        ),
+    )
+    if dst.total_changes:
+        report.texts_inserted += 1
 
 
 def _ensure_chat(
@@ -292,7 +369,6 @@ def _resolve_sender(row: sqlite3.Row) -> tuple[str | None, str | None]:
     is_from_me = int(row["is_from_me"] or 0)
     if is_from_me:
         return None, "Me"
-    # Group: prefer the joined ZWAGROUPMEMBER row.
     if row["group_member_jid"]:
         return row["group_member_jid"], row["group_member_name"] or row["push_name"]
     return row["from_jid"], row["push_name"] or row["chat_name"]
@@ -316,5 +392,3 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
-
-

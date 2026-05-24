@@ -1,8 +1,8 @@
-"""Search the photo database.
+"""Search the WhatsApp archive database.
 
-Combines an FTS5 query (caption / sender / chat / filename) with structured
-filters (date range, sender JID, chat id, group-only). Used by the CLI and
-the web viewer.
+Combines an FTS5 query (body / sender / chat / filename) with structured
+filters (date range, sender JID, chat id, group-only, message type). Used
+by the CLI and the web viewer.
 """
 from __future__ import annotations
 
@@ -21,12 +21,13 @@ class SearchFilters:
     is_from_me: bool | None = None
     since_unix: int | None = None
     until_unix: int | None = None
+    type: str | None = None  # 'text' | 'image' | None for all
     limit: int = 100
     offset: int = 0
 
 
 @dataclass
-class PhotoHit:
+class MessageHit:
     id: int
     chat_jid: str
     chat_name: str | None
@@ -34,71 +35,75 @@ class PhotoHit:
     sender_jid: str | None
     sender_name: str | None
     is_from_me: bool
-    taken_at: int | None
-    media_path: str
-    absolute_path: str
-    filename: str
+    sent_at: int | None
+    type: str
+    body: str | None
+    media_path: str | None
+    absolute_path: str | None
+    filename: str | None
     file_size: int | None
     width: int | None
     height: int | None
     mime_type: str | None
-    caption: str | None
     snippet: str | None = None
     extras: dict[str, Any] = field(default_factory=dict)
 
 
 # Whitelisted ordering options to keep user-supplied input out of SQL.
 _ORDER_BY = {
-    "newest": "p.taken_at DESC, p.id DESC",
-    "oldest": "p.taken_at ASC, p.id ASC",
-    "relevance": "rank, p.taken_at DESC",
+    "newest": "m.sent_at DESC, m.id DESC",
+    "oldest": "m.sent_at ASC, m.id ASC",
+    "relevance": "rank, m.sent_at DESC",
 }
 
 
-def search_photos(
+def search_messages(
     conn: sqlite3.Connection,
     filters: SearchFilters,
     order_by: str = "newest",
-) -> list[PhotoHit]:
+) -> list[MessageHit]:
     where: list[str] = []
     params: list[Any] = []
     use_fts = bool(filters.query and filters.query.strip())
 
     select_cols = (
-        "p.id, p.chat_jid, p.chat_name, p.is_group, p.sender_jid, p.sender_name, "
-        "p.is_from_me, p.taken_at, p.media_path, p.absolute_path, p.filename, "
-        "p.file_size, p.width, p.height, p.mime_type, p.caption"
+        "m.id, m.chat_jid, m.chat_name, m.is_group, m.sender_jid, m.sender_name, "
+        "m.is_from_me, m.sent_at, m.type, m.body, m.media_path, m.absolute_path, "
+        "m.filename, m.file_size, m.width, m.height, m.mime_type"
     )
     if use_fts:
-        select_cols += ", snippet(photos_fts, 0, '<mark>', '</mark>', '…', 12) AS snippet"
-        join = "FROM photos_fts JOIN photos p ON p.id = photos_fts.rowid"
-        where.append("photos_fts MATCH ?")
+        select_cols += ", snippet(messages_fts, 0, '<mark>', '</mark>', '…', 16) AS snippet"
+        join = "FROM messages_fts JOIN messages m ON m.id = messages_fts.rowid"
+        where.append("messages_fts MATCH ?")
         params.append(_sanitize_fts_query(filters.query))
     else:
         select_cols += ", NULL AS snippet"
-        join = "FROM photos p"
+        join = "FROM messages m"
 
     if filters.chat_id is not None:
-        where.append("p.chat_id = ?")
+        where.append("m.chat_id = ?")
         params.append(filters.chat_id)
     if filters.chat_jid is not None:
-        where.append("p.chat_jid = ?")
+        where.append("m.chat_jid = ?")
         params.append(filters.chat_jid)
     if filters.sender_jid is not None:
-        where.append("p.sender_jid = ?")
+        where.append("m.sender_jid = ?")
         params.append(filters.sender_jid)
     if filters.is_group is not None:
-        where.append("p.is_group = ?")
+        where.append("m.is_group = ?")
         params.append(1 if filters.is_group else 0)
     if filters.is_from_me is not None:
-        where.append("p.is_from_me = ?")
+        where.append("m.is_from_me = ?")
         params.append(1 if filters.is_from_me else 0)
     if filters.since_unix is not None:
-        where.append("p.taken_at >= ?")
+        where.append("m.sent_at >= ?")
         params.append(filters.since_unix)
     if filters.until_unix is not None:
-        where.append("p.taken_at <= ?")
+        where.append("m.sent_at <= ?")
         params.append(filters.until_unix)
+    if filters.type is not None:
+        where.append("m.type = ?")
+        params.append(filters.type)
 
     order = _ORDER_BY.get(order_by, _ORDER_BY["newest"])
     if not use_fts and order_by == "relevance":
@@ -116,58 +121,72 @@ def search_photos(
     return [_row_to_hit(r) for r in rows]
 
 
-def count_photos(conn: sqlite3.Connection, filters: SearchFilters) -> int:
+# Back-compat alias: callers / tests that still import ``search_photos``.
+search_photos = search_messages
+
+
+def count_messages(conn: sqlite3.Connection, filters: SearchFilters) -> int:
     where: list[str] = []
     params: list[Any] = []
     use_fts = bool(filters.query and filters.query.strip())
     if use_fts:
-        join = "FROM photos_fts JOIN photos p ON p.id = photos_fts.rowid"
-        where.append("photos_fts MATCH ?")
+        join = "FROM messages_fts JOIN messages m ON m.id = messages_fts.rowid"
+        where.append("messages_fts MATCH ?")
         params.append(_sanitize_fts_query(filters.query))
     else:
-        join = "FROM photos p"
+        join = "FROM messages m"
 
     if filters.chat_id is not None:
-        where.append("p.chat_id = ?"); params.append(filters.chat_id)
+        where.append("m.chat_id = ?"); params.append(filters.chat_id)
     if filters.chat_jid is not None:
-        where.append("p.chat_jid = ?"); params.append(filters.chat_jid)
+        where.append("m.chat_jid = ?"); params.append(filters.chat_jid)
     if filters.sender_jid is not None:
-        where.append("p.sender_jid = ?"); params.append(filters.sender_jid)
+        where.append("m.sender_jid = ?"); params.append(filters.sender_jid)
     if filters.is_group is not None:
-        where.append("p.is_group = ?"); params.append(1 if filters.is_group else 0)
+        where.append("m.is_group = ?"); params.append(1 if filters.is_group else 0)
     if filters.is_from_me is not None:
-        where.append("p.is_from_me = ?"); params.append(1 if filters.is_from_me else 0)
+        where.append("m.is_from_me = ?"); params.append(1 if filters.is_from_me else 0)
     if filters.since_unix is not None:
-        where.append("p.taken_at >= ?"); params.append(filters.since_unix)
+        where.append("m.sent_at >= ?"); params.append(filters.since_unix)
     if filters.until_unix is not None:
-        where.append("p.taken_at <= ?"); params.append(filters.until_unix)
+        where.append("m.sent_at <= ?"); params.append(filters.until_unix)
+    if filters.type is not None:
+        where.append("m.type = ?"); params.append(filters.type)
 
     where_clause = ("WHERE " + " AND ".join(where)) if where else ""
     sql = f"SELECT COUNT(*) {join} {where_clause}"
     return conn.execute(sql, params).fetchone()[0]
 
 
+count_photos = count_messages  # back-compat alias
+
+
 def list_chats(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
-        "SELECT c.id, c.jid, c.name, c.is_group, COUNT(p.id) AS photo_count, "
-        "(SELECT id FROM photos WHERE chat_id = c.id "
-        " ORDER BY taken_at DESC LIMIT 1) AS sample_photo_id "
-        "FROM chats c LEFT JOIN photos p ON p.chat_id = c.id "
-        "GROUP BY c.id ORDER BY photo_count DESC, c.name"
+        "SELECT c.id, c.jid, c.name, c.is_group, "
+        "COUNT(m.id) AS message_count, "
+        "SUM(CASE WHEN m.type = 'image' THEN 1 ELSE 0 END) AS photo_count, "
+        "(SELECT id FROM messages WHERE chat_id = c.id AND type = 'image' "
+        " ORDER BY sent_at DESC LIMIT 1) AS sample_photo_id "
+        "FROM chats c LEFT JOIN messages m ON m.chat_id = c.id "
+        "GROUP BY c.id ORDER BY message_count DESC, c.name"
     ).fetchall()
+    # Old field name kept so the existing API/UI continues to work; the
+    # browse panel uses ``photo_count``, sort by total activity makes the
+    # busiest chats float up regardless of whether they had many photos.
     return [dict(r) for r in rows]
 
 
 def list_senders(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
-        "SELECT sender_jid, sender_name, COUNT(*) AS photo_count, "
-        "MAX(taken_at) AS latest_at, "
-        "(SELECT id FROM photos p2 WHERE p2.sender_jid = p1.sender_jid "
-        " ORDER BY p2.taken_at DESC LIMIT 1) AS sample_photo_id "
-        "FROM photos p1 WHERE sender_jid IS NOT NULL "
-        "GROUP BY sender_jid ORDER BY photo_count DESC"
+        "SELECT sender_jid, sender_name, COUNT(*) AS message_count, "
+        "SUM(CASE WHEN type = 'image' THEN 1 ELSE 0 END) AS photo_count, "
+        "(SELECT id FROM messages m2 WHERE m2.sender_jid = m1.sender_jid "
+        " AND m2.type = 'image' ORDER BY m2.sent_at DESC LIMIT 1) AS sample_photo_id "
+        "FROM messages m1 WHERE sender_jid IS NOT NULL "
+        "GROUP BY sender_jid ORDER BY message_count DESC"
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -177,8 +196,8 @@ def list_senders(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-def _row_to_hit(r: sqlite3.Row) -> PhotoHit:
-    return PhotoHit(
+def _row_to_hit(r: sqlite3.Row) -> MessageHit:
+    return MessageHit(
         id=r["id"],
         chat_jid=r["chat_jid"],
         chat_name=r["chat_name"],
@@ -186,7 +205,9 @@ def _row_to_hit(r: sqlite3.Row) -> PhotoHit:
         sender_jid=r["sender_jid"],
         sender_name=r["sender_name"],
         is_from_me=bool(r["is_from_me"]),
-        taken_at=r["taken_at"],
+        sent_at=r["sent_at"],
+        type=r["type"],
+        body=r["body"],
         media_path=r["media_path"],
         absolute_path=r["absolute_path"],
         filename=r["filename"],
@@ -194,7 +215,6 @@ def _row_to_hit(r: sqlite3.Row) -> PhotoHit:
         width=r["width"],
         height=r["height"],
         mime_type=r["mime_type"],
-        caption=r["caption"],
         snippet=r["snippet"] if "snippet" in r.keys() else None,
     )
 
@@ -234,7 +254,6 @@ def _sanitize_fts_query(q: str) -> str:
             while j < len(q) and not q[j].isspace():
                 j += 1
             tok = q[i:j].replace('"', "")
-            # Strip FTS-meta characters from the bare token.
             tok = tok.translate(str.maketrans("", "", "()*:^"))
             if tok and tok.upper() not in _FTS_RESERVED:
                 out.append(f'"{tok}"*')
