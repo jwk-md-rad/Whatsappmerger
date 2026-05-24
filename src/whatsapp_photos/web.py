@@ -19,12 +19,20 @@ from fastapi.templating import Jinja2Templates
 from . import auth as auth_mod
 from .search import (
     SearchFilters,
+    _row_to_hit,
     count_messages,
     list_chats,
     list_senders,
     search_messages,
 )
 from .thumbs import ensure_thumb
+
+
+_MSG_COLS = (
+    "id, chat_jid, chat_name, is_group, sender_jid, sender_name, "
+    "is_from_me, sent_at, type, body, media_path, absolute_path, "
+    "filename, file_size, width, height, mime_type"
+)
 
 
 PACKAGE_ROOT = Path(__file__).parent
@@ -172,6 +180,94 @@ def create_app(db_path: Path) -> FastAPI:
         """Serve any media file (image, audio, video) for a message."""
         path, mime = _resolve_media(get_conn, message_id)
         return FileResponse(path, media_type=mime)
+
+    @app.get("/api/thread/{chat_id}")
+    def api_thread(
+        chat_id: int,
+        around: int | None = None,
+        before: int | None = None,
+        after: int | None = None,
+        limit: int = Query(100, ge=1, le=500),
+        _: None = Depends(require_auth),
+    ) -> JSONResponse:
+        """Paginate messages within a single chat.
+
+        Modes (mutually exclusive):
+        - ``around=<unix>`` → N/2 messages ≤ unix + N/2 strictly > unix.
+        - ``before=<unix>`` → up to N messages strictly older than unix.
+        - ``after=<unix>``  → up to N messages strictly newer than unix.
+        - none of the above → the latest N messages (initial load).
+
+        Result is always oldest-first.
+        """
+        conn = get_conn()
+        try:
+            if around is not None:
+                half = limit // 2
+                tail = limit - half
+                before_rows = conn.execute(
+                    f"SELECT {_MSG_COLS} FROM messages "
+                    "WHERE chat_id=? AND sent_at IS NOT NULL AND sent_at <= ? "
+                    "ORDER BY sent_at DESC, id DESC LIMIT ?",
+                    (chat_id, around, half),
+                ).fetchall()
+                after_rows = conn.execute(
+                    f"SELECT {_MSG_COLS} FROM messages "
+                    "WHERE chat_id=? AND sent_at IS NOT NULL AND sent_at > ? "
+                    "ORDER BY sent_at ASC, id ASC LIMIT ?",
+                    (chat_id, around, tail),
+                ).fetchall()
+                ordered = list(reversed(before_rows)) + list(after_rows)
+                payload = {
+                    "messages": [_hit_dict(_row_to_hit(r)) for r in ordered],
+                    "before_count": len(before_rows),
+                }
+            elif after is not None:
+                rows = conn.execute(
+                    f"SELECT {_MSG_COLS} FROM messages "
+                    "WHERE chat_id=? AND sent_at IS NOT NULL AND sent_at > ? "
+                    "ORDER BY sent_at ASC, id ASC LIMIT ?",
+                    (chat_id, after, limit),
+                ).fetchall()
+                payload = {"messages": [_hit_dict(_row_to_hit(r)) for r in rows]}
+            elif before is not None:
+                rows = conn.execute(
+                    f"SELECT {_MSG_COLS} FROM messages "
+                    "WHERE chat_id=? AND sent_at IS NOT NULL AND sent_at < ? "
+                    "ORDER BY sent_at DESC, id DESC LIMIT ?",
+                    (chat_id, before, limit),
+                ).fetchall()
+                rows = list(reversed(rows))
+                payload = {"messages": [_hit_dict(_row_to_hit(r)) for r in rows]}
+            else:
+                rows = conn.execute(
+                    f"SELECT {_MSG_COLS} FROM messages "
+                    "WHERE chat_id=? AND sent_at IS NOT NULL "
+                    "ORDER BY sent_at DESC, id DESC LIMIT ?",
+                    (chat_id, limit),
+                ).fetchall()
+                rows = list(reversed(rows))
+                payload = {"messages": [_hit_dict(_row_to_hit(r)) for r in rows]}
+        finally:
+            conn.close()
+        return JSONResponse(payload)
+
+    @app.get("/api/histogram/{chat_id}")
+    def api_histogram(chat_id: int, _: None = Depends(require_auth)) -> JSONResponse:
+        """Per-month message counts for a single chat — feeds the scrubber."""
+        conn = get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT strftime('%Y-%m', sent_at, 'unixepoch') AS bucket, "
+                "MIN(sent_at) AS start_unix, MAX(sent_at) AS end_unix, "
+                "COUNT(*) AS count "
+                "FROM messages WHERE chat_id = ? AND sent_at IS NOT NULL "
+                "GROUP BY bucket ORDER BY bucket",
+                (chat_id,),
+            ).fetchall()
+        finally:
+            conn.close()
+        return JSONResponse([dict(r) for r in rows])
 
     @app.get("/api/thumb/{message_id}")
     def api_thumb(

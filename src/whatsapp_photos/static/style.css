@@ -777,7 +777,27 @@ body.thread-page {
   font-variant-numeric: tabular-nums;
 }
 
-.thread-actions { display: flex; gap: 0.5rem; }
+.thread-actions { display: flex; gap: 0.5rem; align-items: center; }
+
+.thread-actions .jump-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.78rem;
+  color: var(--fg-tertiary);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  padding: 0 0.85rem;
+}
+.thread-actions .jump-field input[type=date] {
+  background: transparent;
+  border: 0;
+  color: var(--fg);
+  padding: 0.35rem 0;
+  font: inherit;
+  font-size: 0.85rem;
+}
 .thread-search-link {
   color: var(--fg-secondary);
   text-decoration: none;
@@ -799,6 +819,68 @@ body.thread-page {
   overflow-x: hidden;
   padding: 0.5rem 0 1.5rem;
   scroll-behavior: auto;
+}
+
+#histogram-wrap {
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 0.5rem 1rem 0.4rem;
+}
+
+#histogram {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 36px;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+#histogram .hist-bar {
+  flex: 1 1 0;
+  min-width: 0;
+  background: rgba(37, 211, 102, 0.45);
+  border: 0;
+  border-radius: 2px 2px 0 0;
+  padding: 0;
+  cursor: pointer;
+  transition: background var(--t-fast);
+}
+
+#histogram .hist-bar:hover {
+  background: var(--accent);
+}
+
+#histogram-axis {
+  display: flex;
+  gap: 1px;
+  max-width: 760px;
+  margin: 0.15rem auto 0;
+  font-size: 0.65rem;
+  color: var(--fg-tertiary);
+  font-variant-numeric: tabular-nums;
+  height: 0.85rem;
+  overflow: hidden;
+}
+
+#histogram-axis .hist-tick {
+  flex: 1 1 0;
+  min-width: 0;
+  text-align: center;
+  white-space: nowrap;
+  overflow: visible;
+  line-height: 1;
+}
+
+.bubble-highlight .thread-bubble {
+  animation: bubble-flash 1.8s ease-out;
+  box-shadow: 0 0 0 2px var(--accent), 0 0 16px var(--accent-glow);
+}
+
+@keyframes bubble-flash {
+  0%   { box-shadow: 0 0 0 3px var(--accent), 0 0 32px var(--accent-glow); }
+  100% { box-shadow: 0 0 0 0 transparent; }
 }
 
 .thread-loader {

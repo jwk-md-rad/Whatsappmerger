@@ -16,9 +16,17 @@
     </div>
   </div>
   <div class="thread-actions">
+    <label class="jump-field" title="Jump to a date in this conversation">
+      <span>Jump to</span>
+      <input type="date" id="jump-date">
+    </label>
     <a href="/?chat_id={{ chat_id }}" class="thread-search-link" title="Search within this chat">Search</a>
   </div>
 </header>
+<div id="histogram-wrap" hidden>
+  <div id="histogram"></div>
+  <div id="histogram-axis"></div>
+</div>
 <main id="thread-stage">
   <div id="thread-top-loader" class="thread-loader" hidden>Loading older…</div>
   <div id="thread-messages"></div>

@@ -8,6 +8,10 @@ const stage = document.getElementById("thread-stage");
 const messagesEl = document.getElementById("thread-messages");
 const topLoader = document.getElementById("thread-top-loader");
 const bottomLoader = document.getElementById("thread-bottom-loader");
+const histWrap = document.getElementById("histogram-wrap");
+const histEl = document.getElementById("histogram");
+const histAxis = document.getElementById("histogram-axis");
+const jumpDate = document.getElementById("jump-date");
 
 const lightbox = document.getElementById("lightbox");
 const fullImg = document.getElementById("full");
@@ -19,20 +23,28 @@ document.getElementById("lb-next").addEventListener("click", (e) => { e.preventD
 
 const BATCH = 100;
 
-let oldestOffset = 0;     // next offset to fetch (newest-first paging)
-let hasMore = true;
-let loadingOlder = false;
-// Loaded messages, kept oldest-first so DOM order matches array order.
+// Cursor-based state. `loaded` is always oldest-first.
 let loaded = [];
-// Index in `loaded` of image messages, for the lightbox nav.
+let hasMoreOlder = true;
+let hasMoreNewer = false;   // initial load is the latest, so nothing newer
+let loadingOlder = false;
+let loadingNewer = false;
 let lbImageIndex = -1;
+let highlightTargetId = null; // bubble id to flash after a jump
 
 // ---------------------------------------------------------------------------
 // Loading
 // ---------------------------------------------------------------------------
 
+async function fetchThread(params) {
+  const qs = new URLSearchParams(params).toString();
+  const r = await fetch(`/api/thread/${CHAT_ID}?${qs}`);
+  if (!r.ok) throw new Error(`thread fetch failed: ${r.status}`);
+  return r.json();
+}
+
 async function loadOlder() {
-  if (!hasMore || loadingOlder) return;
+  if (!hasMoreOlder || loadingOlder) return;
   loadingOlder = true;
   topLoader.hidden = false;
   topLoader.textContent = "Loading older messages…";
@@ -41,45 +53,101 @@ async function loadOlder() {
   const scrollTopBefore = stage.scrollTop;
 
   try {
-    const params = new URLSearchParams();
-    params.set("chat_id", CHAT_ID);
-    params.set("order", "newest");
-    params.set("offset", oldestOffset);
-    params.set("limit", BATCH);
-    const r = await fetch("/api/search?" + params.toString());
-    if (!r.ok) { topLoader.textContent = "Failed to load."; return; }
-    const data = await r.json();
-    if (data.next_offset === null) hasMore = false;
-    oldestOffset += data.results.length;
-
-    // API returns newest -> oldest. Reverse so the batch is oldest -> newest;
-    // these are all older than what we already have, so prepend.
-    const ordered = [...data.results].reverse();
-    if (ordered.length) {
-      loaded = ordered.concat(loaded);
-      prependBatch(ordered);
+    const params = { limit: BATCH };
+    if (loaded.length) params.before = loaded[0].sent_at;
+    const data = await fetchThread(params);
+    const batch = data.messages;
+    hasMoreOlder = batch.length === BATCH;
+    if (batch.length) {
+      loaded = batch.concat(loaded);
+      prependBatch(batch);
+      const heightAfter = stage.scrollHeight;
+      stage.scrollTop = scrollTopBefore + (heightAfter - heightBefore);
     }
-
-    // Preserve scroll: keep the user's currently visible message in view.
-    const heightAfter = stage.scrollHeight;
-    stage.scrollTop = scrollTopBefore + (heightAfter - heightBefore);
-
-    if (!hasMore) {
-      topLoader.textContent = `Beginning of conversation · ${loaded.length.toLocaleString()} messages`;
+    if (!hasMoreOlder) {
+      topLoader.textContent = `Beginning of conversation · ${loaded.length.toLocaleString()} messages loaded`;
     } else {
       topLoader.hidden = true;
     }
+  } catch (e) {
+    topLoader.textContent = "Failed to load older.";
   } finally {
     loadingOlder = false;
   }
+}
+
+async function loadNewer() {
+  if (!hasMoreNewer || loadingNewer) return;
+  loadingNewer = true;
+  bottomLoader.textContent = "Loading newer messages…";
+  try {
+    const params = { limit: BATCH, after: loaded[loaded.length - 1].sent_at };
+    const data = await fetchThread(params);
+    const batch = data.messages;
+    hasMoreNewer = batch.length === BATCH;
+    if (batch.length) {
+      loaded = loaded.concat(batch);
+      appendBatch(batch);
+    }
+    bottomLoader.textContent = hasMoreNewer ? "" : "";
+  } catch (e) {
+    bottomLoader.textContent = "Failed to load newer.";
+  } finally {
+    loadingNewer = false;
+  }
+}
+
+async function jumpToUnix(unix) {
+  // Wipe and reload around `unix`.
+  loaded = [];
+  hasMoreOlder = true;
+  hasMoreNewer = true;
+  messagesEl.innerHTML = "";
+  topLoader.hidden = true;
+  bottomLoader.textContent = "Loading…";
+
+  const data = await fetchThread({ limit: BATCH, around: unix });
+  const batch = data.messages;
+  const beforeCount = data.before_count || 0;
+  const afterCount = batch.length - beforeCount;
+  const half = Math.floor(BATCH / 2);
+  const tail = BATCH - half;
+  hasMoreOlder = beforeCount === half;
+  hasMoreNewer = afterCount === tail;
+
+  loaded = batch;
+  // Find the anchor: the first message at or after `unix`.
+  let anchorIdx = batch.findIndex((m) => m.sent_at >= unix);
+  if (anchorIdx === -1) anchorIdx = batch.length - 1;
+  highlightTargetId = batch[anchorIdx] ? batch[anchorIdx].id : null;
+
+  renderAll(batch);
+
+  // Scroll the anchor into view.
+  if (highlightTargetId != null) {
+    const el = messagesEl.querySelector(`[data-message-id="${highlightTargetId}"]`);
+    if (el) {
+      el.scrollIntoView({ block: "center", behavior: "auto" });
+      el.classList.add("bubble-highlight");
+      setTimeout(() => el.classList.remove("bubble-highlight"), 2000);
+    }
+  }
+
+  bottomLoader.textContent = "";
 }
 
 // ---------------------------------------------------------------------------
 // Rendering
 // ---------------------------------------------------------------------------
 
-function prependBatch(batch) {
-  // Build a fragment in oldest -> newest order.
+function renderAll(batch) {
+  // Build all bubbles fresh from a (oldest-first) batch.
+  messagesEl.innerHTML = "";
+  appendBatch(batch);
+}
+
+function buildFragment(batch) {
+  // Build a fragment with date separators and bubbles in oldest-first order.
   const frag = document.createDocumentFragment();
   let prevDay = null;
   let prevSender = null;
@@ -94,20 +162,49 @@ function prependBatch(batch) {
     frag.appendChild(renderBubble(m, !sameSender));
     prevSender = m.is_from_me ? "__me__" : m.sender_jid;
   }
+  return frag;
+}
 
-  // De-dupe: if the existing first bubble's day matches the batch's last day,
-  // the next separator (already present at top of existing content) is
-  // redundant.
+function prependBatch(batch) {
+  const frag = buildFragment(batch);
   const existingFirst = messagesEl.firstElementChild;
   const batchLastDay = batch.length ? dayKey(batch[batch.length - 1].sent_at) : null;
   if (existingFirst && existingFirst.classList.contains("date-separator")) {
     const existingDay = existingFirst.dataset.day;
-    if (existingDay === batchLastDay) {
-      existingFirst.remove();
+    if (existingDay === batchLastDay) existingFirst.remove();
+  }
+  messagesEl.insertBefore(frag, messagesEl.firstChild);
+}
+
+function appendBatch(batch) {
+  // If the new batch's first day matches the last existing day, skip the
+  // duplicate date separator at the start of the fragment.
+  const existingLast = messagesEl.lastElementChild;
+  let prevDay = null;
+  if (existingLast) {
+    // Walk back to find the previous bubble's day.
+    let el = existingLast;
+    while (el && !el.classList.contains("bubble-row")) el = el.previousElementSibling;
+    if (el) {
+      const messageId = el.dataset.messageId;
+      const found = loaded.find((m) => String(m.id) === messageId);
+      if (found) prevDay = dayKey(found.sent_at);
     }
   }
-
-  messagesEl.insertBefore(frag, messagesEl.firstChild);
+  const frag = document.createDocumentFragment();
+  let prevSender = null;
+  for (const m of batch) {
+    const day = dayKey(m.sent_at);
+    if (day !== prevDay) {
+      frag.appendChild(renderDateSeparator(m.sent_at));
+      prevDay = day;
+      prevSender = null;
+    }
+    const sameSender = m.sender_jid != null && m.sender_jid === prevSender && !m.is_from_me;
+    frag.appendChild(renderBubble(m, !sameSender));
+    prevSender = m.is_from_me ? "__me__" : m.sender_jid;
+  }
+  messagesEl.appendChild(frag);
 }
 
 function renderDateSeparator(unix) {
@@ -194,6 +291,66 @@ function renderBubble(m, showSender) {
 }
 
 // ---------------------------------------------------------------------------
+// Histogram (per-month message counts) — clickable scrubber.
+// ---------------------------------------------------------------------------
+
+let histBuckets = [];
+
+async function loadHistogram() {
+  try {
+    const r = await fetch(`/api/histogram/${CHAT_ID}`);
+    if (!r.ok) return;
+    histBuckets = await r.json();
+    if (!histBuckets.length) return;
+    renderHistogram();
+    histWrap.hidden = false;
+    jumpDate.min = isoDate(histBuckets[0].start_unix);
+    jumpDate.max = isoDate(histBuckets[histBuckets.length - 1].end_unix);
+  } catch (e) {
+    // Silent — histogram is a nice-to-have.
+  }
+}
+
+function renderHistogram() {
+  histEl.innerHTML = "";
+  histAxis.innerHTML = "";
+  const maxCount = Math.max(...histBuckets.map((b) => b.count));
+  let lastYear = null;
+  for (const b of histBuckets) {
+    const bar = document.createElement("button");
+    bar.type = "button";
+    bar.className = "hist-bar";
+    const ratio = b.count / maxCount;
+    bar.style.height = `${Math.max(4, ratio * 100)}%`;
+    bar.title = `${b.bucket} · ${b.count.toLocaleString()} messages`;
+    bar.addEventListener("click", () => jumpToUnix(b.start_unix));
+    histEl.appendChild(bar);
+
+    const label = document.createElement("span");
+    label.className = "hist-tick";
+    const year = b.bucket.slice(0, 4);
+    label.textContent = year !== lastYear ? year : "";
+    histAxis.appendChild(label);
+    lastYear = year;
+  }
+}
+
+function isoDate(unix) {
+  const d = new Date(unix * 1000);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+jumpDate.addEventListener("change", () => {
+  const v = jumpDate.value;
+  if (!v) return;
+  const d = new Date(v + "T12:00:00");
+  jumpToUnix(Math.floor(d.getTime() / 1000));
+});
+
+// ---------------------------------------------------------------------------
 // Date helpers
 // ---------------------------------------------------------------------------
 
@@ -252,7 +409,7 @@ function senderColor(jid) {
 }
 
 // ---------------------------------------------------------------------------
-// Lightbox
+// Lightbox (image only — audio/video play inline)
 // ---------------------------------------------------------------------------
 
 function imageMessages() {
@@ -319,20 +476,29 @@ lightbox.addEventListener("keydown", (e) => {
 });
 
 // ---------------------------------------------------------------------------
-// Infinite scroll: load older when near the top
+// Infinite scroll: top loads older, bottom loads newer (after a jump)
 // ---------------------------------------------------------------------------
 
 stage.addEventListener("scroll", () => {
   if (stage.scrollTop < 200) loadOlder();
+  const distFromBottom = stage.scrollHeight - stage.scrollTop - stage.clientHeight;
+  if (distFromBottom < 200) loadNewer();
 });
 
 // ---------------------------------------------------------------------------
-// Boot
+// Boot — accept ?at=<unix> for deep-linked jump
 // ---------------------------------------------------------------------------
 
-bottomLoader.textContent = "Loading messages…";
-loadOlder().then(() => {
-  bottomLoader.textContent = "";
-  // Initial scroll: newest at the bottom, like WhatsApp.
-  stage.scrollTop = stage.scrollHeight;
-});
+(async () => {
+  await loadHistogram();
+  const url = new URL(window.location.href);
+  const at = url.searchParams.get("at");
+  if (at) {
+    await jumpToUnix(parseInt(at, 10));
+  } else {
+    bottomLoader.textContent = "Loading messages…";
+    await loadOlder();
+    bottomLoader.textContent = "";
+    stage.scrollTop = stage.scrollHeight;
+  }
+})();
