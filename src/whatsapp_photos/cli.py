@@ -180,6 +180,7 @@ def _serve(db_path: Path, *, host: str, port: int) -> int:
     from . import netinfo
     from .web import create_app
 
+    _maybe_upgrade_indexes(db_path)
     app = create_app(db_path)
     print(f"Serving WhatsApp archive on {netinfo.url_for(host, port)}")
     if host in {"0.0.0.0", "::", ""}:
@@ -205,6 +206,40 @@ def _serve(db_path: Path, *, host: str, port: int) -> int:
 
 def _default_demo_dir() -> Path:
     return Path.home() / ".cache" / "whatsapp_photos" / "demo"
+
+
+def _maybe_upgrade_indexes(db_path: Path) -> None:
+    """Create any indexes that newer versions of the schema rely on.
+
+    Old databases built before composite indexes were added would otherwise
+    make the chat-list query slow on large archives.
+    """
+    from .schema import ensure_indexes
+
+    if not db_path.exists():
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+    except sqlite3.Error:
+        return
+    try:
+        existing = {
+            row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index'"
+            )
+        }
+        wanted = {"messages_chat_sent"}
+        missing = wanted - existing
+        if missing:
+            print(
+                f"One-time index build for faster chat list "
+                f"({', '.join(sorted(missing))})…"
+            )
+            ensure_indexes(conn)
+            conn.commit()
+            print("Indexes built.")
+    finally:
+        conn.close()
 
 
 def _cmd_password(args) -> int:

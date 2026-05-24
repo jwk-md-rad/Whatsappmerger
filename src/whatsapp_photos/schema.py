@@ -50,6 +50,7 @@ SCHEMA = [
     """,
     "CREATE INDEX IF NOT EXISTS messages_sent_at ON messages (sent_at)",
     "CREATE INDEX IF NOT EXISTS messages_chat_id ON messages (chat_id)",
+    "CREATE INDEX IF NOT EXISTS messages_chat_sent ON messages (chat_id, sent_at)",
     "CREATE INDEX IF NOT EXISTS messages_sender ON messages (sender_jid)",
     "CREATE INDEX IF NOT EXISTS messages_type ON messages (type)",
     """
@@ -69,6 +70,19 @@ SCHEMA = [
 def init_schema(conn: sqlite3.Connection) -> None:
     for stmt in SCHEMA:
         conn.execute(stmt)
+    conn.commit()
+
+
+def ensure_indexes(conn: sqlite3.Connection) -> None:
+    """Idempotently create just the indexes (no tables, no FTS).
+
+    Used at server startup to upgrade older databases in place without
+    requiring a re-ingest.
+    """
+    for stmt in SCHEMA:
+        s = stmt.strip()
+        if s.upper().startswith("CREATE INDEX"):
+            conn.execute(stmt)
     conn.commit()
 
 

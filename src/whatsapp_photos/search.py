@@ -162,6 +162,14 @@ count_photos = count_messages  # back-compat alias
 
 
 def list_chats(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """One row per chat with totals and a peek at the last message.
+
+    Used by both the chat-list landing page (sort + preview) and the
+    search-page combobox. The composite index on (chat_id, sent_at)
+    created by ``ensure_indexes`` turns the last-message lookup from a
+    per-chat scan into a single seek — without it, this query is
+    minutes-slow on a large archive.
+    """
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
         "SELECT c.id, c.jid, c.name, c.is_group, "
