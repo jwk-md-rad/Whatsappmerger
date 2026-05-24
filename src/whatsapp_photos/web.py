@@ -75,6 +75,36 @@ def create_app(db_path: Path) -> FastAPI:
             context={"title": "WhatsApp Archive"},
         )
 
+    @app.get("/thread/{chat_id}", response_class=HTMLResponse)
+    def thread(
+        chat_id: int,
+        request: Request,
+        _=Depends(require_auth),
+    ) -> HTMLResponse:
+        conn = get_conn()
+        try:
+            row = conn.execute(
+                "SELECT c.id, c.jid, c.name, c.is_group, "
+                "COUNT(m.id) AS message_count "
+                "FROM chats c LEFT JOIN messages m ON m.chat_id = c.id "
+                "WHERE c.id = ? GROUP BY c.id",
+                (chat_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Chat not found")
+        return templates.TemplateResponse(
+            request=request,
+            name="thread.html",
+            context={
+                "chat_id": chat_id,
+                "chat_name": row["name"] or row["jid"],
+                "is_group": bool(row["is_group"]),
+                "message_count": row["message_count"],
+            },
+        )
+
     @app.get("/api/search")
     def api_search(
         q: str | None = None,

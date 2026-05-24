@@ -512,9 +512,12 @@ function renderBrowsePanel(chats, senders) {
   for (const c of chats.slice(0, 12)) {
     chatRow.appendChild(makeTile({
       name: c.name || c.jid,
-      count: c.photo_count,
+      count: c.message_count != null ? c.message_count : c.photo_count,
       sample: c.sample_photo_id,
-      onClick: () => pivotTo("chat_id", String(c.id)),
+      // Chat tiles open the chronological thread view directly — it's
+      // what users want when picking a chat to read. To filter the
+      // search instead, click the chat name in any card.
+      onClick: () => { window.location.href = `/thread/${c.id}`; },
     }));
   }
   for (const s of senders.slice(0, 12)) {

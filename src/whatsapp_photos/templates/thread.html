@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ chat_name }} — WhatsApp Archive</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="thread-page">
+<header class="thread-header">
+  <a href="/" class="back-link" aria-label="Back to archive">&#8249;</a>
+  <div class="thread-title">
+    <h1 id="chat-title">{{ chat_name }}</h1>
+    <div class="thread-sub">
+      {% if is_group %}group · {% endif %}{{ "{:,}".format(message_count) }} messages
+    </div>
+  </div>
+  <div class="thread-actions">
+    <a href="/?chat_id={{ chat_id }}" class="thread-search-link" title="Search within this chat">Search</a>
+  </div>
+</header>
+<main id="thread-stage">
+  <div id="thread-top-loader" class="thread-loader" hidden>Loading older…</div>
+  <div id="thread-messages"></div>
+  <div id="thread-bottom-loader" class="thread-loader"></div>
+</main>
+<dialog id="lightbox">
+  <div class="lb-stage">
+    <button id="close-lb" aria-label="Close">&times;</button>
+    <button class="lb-arrow prev" id="lb-prev" aria-label="Previous">&#8249;</button>
+    <button class="lb-arrow next" id="lb-next" aria-label="Next">&#8250;</button>
+    <img id="full">
+    <div id="lb-text" hidden></div>
+  </div>
+  <div id="meta"></div>
+</dialog>
+<script>
+  window.CHAT_ID = {{ chat_id }};
+  window.CHAT_NAME = {{ chat_name|tojson }};
+  window.IS_GROUP = {{ is_group|tojson }};
+  window.MESSAGE_COUNT = {{ message_count }};
+</script>
+<script src="/static/thread.js" defer></script>
+</body>
+</html>
