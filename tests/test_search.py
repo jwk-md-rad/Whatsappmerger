@@ -83,6 +83,16 @@ def test_search_query_with_punctuation_does_not_blow_up(tmp_path: Path) -> None:
     assert hits
 
 
+def test_search_query_that_sanitizes_to_empty_returns_nothing(tmp_path: Path) -> None:
+    """Queries like '*', 'AND', '()' previously fell through to the
+    no-FTS path and returned every message in the archive labelled as
+    a hit. They should yield 0."""
+    conn = _ingested(tmp_path)
+    for q in ("*", "AND", "OR", "NEAR", "()", "*()", "AND AND"):
+        assert count_messages(conn, SearchFilters(query=q)) == 0, q
+        assert search_messages(conn, SearchFilters(query=q)) == [], q
+
+
 def test_list_senders(tmp_path: Path) -> None:
     conn = _ingested(tmp_path)
     sx = list_senders(conn)

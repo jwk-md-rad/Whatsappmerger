@@ -32,7 +32,7 @@ from typing import Iterator
 from PIL import Image, UnidentifiedImageError
 
 from .cocoa import cocoa_to_unix
-from .schema import init_schema, rebuild_fts
+from .schema import init_schema, rebuild_fts, refresh_chat_sender_names
 
 
 log = logging.getLogger("whatsapp_photos.ingest")
@@ -143,6 +143,11 @@ def ingest(
     out_db = Path(out_db)
     out_db.parent.mkdir(parents=True, exist_ok=True)
 
+    # Carry the existing auth meta (salt + hash + iterations) across a
+    # re-ingest so the user doesn't have to re-set their password every
+    # time they refresh from a new iPhone backup.
+    preserved_meta = _read_meta_for_carry(out_db) if out_db.exists() else []
+
     if out_db.exists():
         out_db.unlink()
 
@@ -162,7 +167,12 @@ def ingest(
             _process_row(row, anchor, chat_cache, dst, options, report)
 
         rebuild_fts(dst)
+        refresh_chat_sender_names(dst)
         report.chats_inserted = dst.execute("SELECT COUNT(*) FROM chats").fetchone()[0]
+
+        if preserved_meta:
+            _write_meta(dst, preserved_meta)
+
         dst.commit()
     finally:
         src.close()
@@ -505,3 +515,44 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Re-ingest: preserve auth meta across DB replacement
+# ---------------------------------------------------------------------------
+
+
+_AUTH_META_KEYS = ("auth.salt", "auth.hash", "auth.iterations")
+
+
+def _read_meta_for_carry(db_path: Path) -> list[tuple[str, bytes]]:
+    """Pull auth.* keys out of an existing DB so re-ingest can re-apply
+    them. Returns an empty list if the meta table or the keys are missing
+    — both fine, just means there was no password."""
+    try:
+        conn = sqlite3.connect(_ro_uri(db_path), uri=True)
+    except sqlite3.Error:
+        return []
+    try:
+        try:
+            rows = conn.execute(
+                "SELECT key, value FROM meta WHERE key IN ("
+                + ",".join("?" * len(_AUTH_META_KEYS))
+                + ")",
+                _AUTH_META_KEYS,
+            ).fetchall()
+        except sqlite3.Error:
+            return []
+    finally:
+        conn.close()
+    return [(k, v) for k, v in rows if v is not None]
+
+
+def _write_meta(conn: sqlite3.Connection, items: list[tuple[str, bytes]]) -> None:
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value BLOB)"
+    )
+    conn.executemany(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+        items,
+    )

@@ -132,3 +132,56 @@ def test_auth_off_when_no_password(tmp_path: Path) -> None:
     client = TestClient(app)
     r = client.get("/api/search")
     assert r.status_code == 200
+
+
+def test_static_files_require_auth_when_password_set(tmp_path: Path) -> None:
+    """/static/* used to be mounted outside the dependency tree, so JS
+    source (and the route map it encodes) was readable by anyone who
+    could reach the server — even with a password set on every other
+    route."""
+    db = _ingested_db(tmp_path)
+    conn = sqlite3.connect(db)
+    auth_mod.set_password(conn, "secret")
+    conn.close()
+
+    client = TestClient(create_app(db))
+    assert client.get("/static/chats.js").status_code == 401
+
+    creds = base64.b64encode(b"x:secret").decode()
+    r = client.get("/static/chats.js", headers={"Authorization": f"Basic {creds}"})
+    assert r.status_code == 200
+    assert "chat-row" in r.text
+
+
+def test_static_files_reject_path_traversal(tmp_path: Path) -> None:
+    db = _ingested_db(tmp_path)
+    client = TestClient(create_app(db))
+    # Without traversal protection this would land on /src/.../auth.py.
+    r = client.get("/static/../auth.py")
+    assert r.status_code == 404
+
+
+def test_thread_page_message_count_matches_api(tmp_path: Path) -> None:
+    """The thread-page header showed COUNT(*) including NULL-sent_at
+    rows, but /api/thread filters them out — leading to "8 messages"
+    in the header while only 3 are ever rendered."""
+    db = _ingested_db(tmp_path)
+    # Inject NULL-sent_at rows into chat 1.
+    conn = sqlite3.connect(db)
+    conn.executemany(
+        "INSERT INTO messages (chat_id, chat_jid, chat_name, is_group, "
+        "sender_jid, sender_name, is_from_me, stanza_id, sent_at, type, body) "
+        "VALUES (1, '111@s.whatsapp.net', 'Alice', 0, '111@s.whatsapp.net', "
+        "'Alice', 0, ?, NULL, 'text', 'ghost')",
+        [("ghost-1",), ("ghost-2",), ("ghost-3",)],
+    )
+    conn.commit(); conn.close()
+
+    client = TestClient(create_app(db))
+    page = client.get("/thread/1").text
+    import re
+    m = re.search(r"(\d+(?:,\d+)*)\s+messages", page)
+    assert m, "header line not found"
+    header_count = int(m.group(1).replace(",", ""))
+    api_count = len(client.get("/api/thread/1?limit=500").json()["messages"])
+    assert header_count == api_count, (header_count, api_count)

@@ -65,3 +65,29 @@ def test_set_empty_password_rejected(tmp_path: Path) -> None:
             raise AssertionError("expected ValueError for empty password")
     finally:
         conn.close()
+
+
+def test_password_preserved_across_reingest(tmp_path: Path) -> None:
+    """Refreshing the archive from a new iPhone backup must not wipe
+    the user's password — they have no way to recover the hash and
+    re-setting it every refresh is hostile UX."""
+    chat_db, media_root = build_fixture(tmp_path)
+    out = tmp_path / "photos.db"
+    ingest(chat_db, media_root, out)
+
+    conn = sqlite3.connect(out)
+    auth_mod.set_password(conn, "correct horse battery staple")
+    conn.close()
+
+    # Re-ingest into the same output path (the same source files; that
+    # part is irrelevant to the test, what matters is that ingest()
+    # replaces the DB).
+    ingest(chat_db, media_root, out)
+
+    conn = sqlite3.connect(out)
+    try:
+        assert auth_mod.has_password(conn) is True
+        assert auth_mod.verify_password(conn, "correct horse battery staple") is True
+        assert auth_mod.verify_password(conn, "wrong") is False
+    finally:
+        conn.close()

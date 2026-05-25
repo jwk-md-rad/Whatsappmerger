@@ -67,6 +67,13 @@ def search_messages(
     sanitized_q = _sanitize_fts_query(filters.query) if filters.query else ""
     use_fts = bool(sanitized_q)
 
+    # If the user typed something but it sanitized to nothing usable
+    # (queries like '*', '()', 'AND'), don't silently fall through to
+    # "no FTS" — that returns the entire archive labelled as a search
+    # hit, which is more confusing than a clean empty.
+    if filters.query and filters.query.strip() and not sanitized_q:
+        return []
+
     select_cols = (
         "m.id, m.chat_jid, m.chat_name, m.is_group, m.sender_jid, m.sender_name, "
         "m.is_from_me, m.sent_at, m.type, m.body, m.media_path, m.absolute_path, "
@@ -134,6 +141,12 @@ def count_messages(conn: sqlite3.Connection, filters: SearchFilters) -> int:
     params: list[Any] = []
     sanitized_q = _sanitize_fts_query(filters.query) if filters.query else ""
     use_fts = bool(sanitized_q)
+
+    # Mirror search_messages: a user-typed query that sanitizes to
+    # nothing means "0 results", not "all results".
+    if filters.query and filters.query.strip() and not sanitized_q:
+        return 0
+
     if use_fts:
         join = "FROM messages_fts JOIN messages m ON m.id = messages_fts.rowid"
         where.append("messages_fts MATCH ?")
@@ -172,29 +185,18 @@ count_photos = count_messages  # back-compat alias
 def list_chats(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """One row per chat with totals and a peek at the last message.
 
-    Used by both the chat-list landing page (sort + preview) and the
-    search-page combobox. The composite index on (chat_id, sent_at)
-    created by ``ensure_indexes`` turns the last-message lookup from a
-    per-chat scan into a single seek — without it, this query is
-    minutes-slow on a large archive.
+    sender_names is read directly from the chats table (populated at
+    ingest, refreshed by the startup-migration path on old DBs). The
+    previous correlated GROUP_CONCAT subquery dominated landing-page
+    latency at scale (~327ms of 800ms on a 665k-msg archive).
     """
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
-        "SELECT c.id, c.jid, c.name, c.is_group, "
+        "SELECT c.id, c.jid, c.name, c.is_group, c.sender_names, "
         "COUNT(m.id) AS message_count, "
         "SUM(CASE WHEN m.type = 'image' THEN 1 ELSE 0 END) AS photo_count, "
         "(SELECT id FROM messages WHERE chat_id = c.id AND type = 'image' "
         " ORDER BY sent_at DESC LIMIT 1) AS sample_photo_id, "
-        # Distinct names of people who've posted in this chat, used by
-        # the landing-page filter to match groups by member. We
-        # deliberately exclude is_from_me=1 — the user is in every chat
-        # they own, so including "Me" would make typing your own name
-        # match every row (= effectively no filter at all).
-        "(SELECT GROUP_CONCAT(sender_name, ' · ') FROM ("
-        "   SELECT DISTINCT sender_name FROM messages "
-        "   WHERE chat_id = c.id AND sender_name IS NOT NULL "
-        "     AND TRIM(sender_name) <> '' AND is_from_me = 0"
-        " )) AS sender_names, "
         "last_m.sent_at      AS last_message_at, "
         "last_m.body         AS last_message_body, "
         "last_m.type         AS last_message_type, "

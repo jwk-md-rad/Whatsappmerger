@@ -209,15 +209,19 @@ def _default_demo_dir() -> Path:
 
 
 def _maybe_upgrade_indexes(db_path: Path) -> None:
-    """Create any indexes that newer versions of the schema rely on.
+    """Bring an older archive up to the current schema in place.
 
-    Old databases built before composite indexes were added would otherwise
-    make the chat-list query slow on large archives. We try-and-shrug here
-    rather than aborting startup: if the DB is read-only, locked, or
-    otherwise can't accept the CREATE INDEX, the server still starts and
-    serves correctly, just with the slower chat-list query.
+    Adds composite/partial indexes and the chats.sender_names column +
+    backfill. Try-and-shrug: if the DB is read-only, locked, or
+    otherwise can't accept writes, the server still starts and serves
+    correctly, just with the slower legacy query paths.
     """
-    from .schema import ensure_indexes
+    from .schema import (
+        add_chats_sender_names_column,
+        ensure_indexes,
+        has_chats_sender_names_column,
+        refresh_chat_sender_names,
+    )
 
     if not db_path.exists():
         return
@@ -235,21 +239,35 @@ def _maybe_upgrade_indexes(db_path: Path) -> None:
         except sqlite3.Error:
             return
         wanted = {"messages_chat_sent", "messages_chat_image_sent"}
-        missing = wanted - existing
-        if not missing:
-            return
+        missing_idx = wanted - existing
+
         try:
-            print(
-                f"One-time index build for faster chat list "
-                f"({', '.join(sorted(missing))})…"
-            )
-            ensure_indexes(conn)
+            needs_sender_names = not has_chats_sender_names_column(conn)
+        except sqlite3.Error:
+            needs_sender_names = False
+
+        if not missing_idx and not needs_sender_names:
+            return
+
+        steps: list[str] = []
+        if missing_idx:
+            steps.append(f"indexes: {', '.join(sorted(missing_idx))}")
+        if needs_sender_names:
+            steps.append("chats.sender_names column + backfill")
+        print(f"One-time DB upgrade ({'; '.join(steps)})…")
+
+        try:
+            if missing_idx:
+                ensure_indexes(conn)
+            if needs_sender_names:
+                add_chats_sender_names_column(conn)
+                refresh_chat_sender_names(conn)
             conn.commit()
-            print("Indexes built.")
+            print("DB upgraded.")
         except sqlite3.Error as e:
             print(
-                f"Note: could not build chat-list index ({e}); the chat "
-                f"list may be slow. Proceeding anyway.",
+                f"Note: could not finish DB upgrade ({e}); the server "
+                f"will start anyway, the chat list may be slow.",
                 file=sys.stderr,
             )
     finally:

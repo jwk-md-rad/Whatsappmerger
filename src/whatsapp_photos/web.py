@@ -13,7 +13,6 @@ from typing import Literal
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from . import auth as auth_mod
@@ -49,7 +48,6 @@ def create_app(db_path: Path) -> FastAPI:
 
     app = FastAPI(title="WhatsApp Archive")
     templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
-    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     @app.middleware("http")
     async def _no_cache_html_and_static(request: Request, call_next):
@@ -94,6 +92,26 @@ def create_app(db_path: Path) -> FastAPI:
         finally:
             conn.close()
 
+    @app.get("/static/{file_path:path}")
+    def static_file(
+        file_path: str, _: None = Depends(require_auth)
+    ) -> FileResponse:
+        """Serve static assets behind the same auth wall as the HTML.
+
+        Mounting StaticFiles via `app.mount` sits outside the dependency
+        tree, so /static was readable without the password — which
+        leaks the JS source (and via it, the route map) to anyone who
+        can reach the server. Routing it explicitly fixes that.
+        """
+        # Defence in depth against ../-traversal even though FileResponse
+        # below would already 404 anything outside STATIC_DIR.
+        target = (STATIC_DIR / file_path).resolve()
+        if STATIC_DIR.resolve() not in target.parents and target != STATIC_DIR.resolve():
+            raise HTTPException(status_code=404, detail="Not found")
+        if not target.is_file():
+            raise HTTPException(status_code=404, detail="Not found")
+        return FileResponse(target)
+
     @app.get("/", response_class=HTMLResponse)
     def chats_landing(request: Request, _=Depends(require_auth)) -> HTMLResponse:
         return templates.TemplateResponse(
@@ -118,9 +136,13 @@ def create_app(db_path: Path) -> FastAPI:
     ) -> HTMLResponse:
         conn = get_conn()
         try:
+            # Only count messages that the /api/thread endpoint will
+            # actually serve (it filters NULL sent_at); otherwise the
+            # header reports "8 messages" and the body only loads 3.
             row = conn.execute(
                 "SELECT c.id, c.jid, c.name, c.is_group, "
-                "COUNT(m.id) AS message_count "
+                "COUNT(CASE WHEN m.sent_at IS NOT NULL THEN 1 END) "
+                "  AS message_count "
                 "FROM chats c LEFT JOIN messages m ON m.chat_id = c.id "
                 "WHERE c.id = ? GROUP BY c.id",
                 (chat_id,),

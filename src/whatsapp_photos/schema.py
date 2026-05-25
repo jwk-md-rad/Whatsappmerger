@@ -20,7 +20,8 @@ SCHEMA = [
         id INTEGER PRIMARY KEY,
         jid TEXT UNIQUE NOT NULL,
         name TEXT,
-        is_group INTEGER NOT NULL DEFAULT 0
+        is_group INTEGER NOT NULL DEFAULT 0,
+        sender_names TEXT
     )
     """,
     """
@@ -88,6 +89,41 @@ def ensure_indexes(conn: sqlite3.Connection) -> None:
         s = stmt.strip()
         if s.upper().startswith("CREATE INDEX"):
             conn.execute(stmt)
+    conn.commit()
+
+
+def has_chats_sender_names_column(conn: sqlite3.Connection) -> bool:
+    """Older DBs lack the chats.sender_names column added for the
+    landing-page filter. Returns True if the column is present."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(chats)")}
+    return "sender_names" in cols
+
+
+def add_chats_sender_names_column(conn: sqlite3.Connection) -> None:
+    conn.execute("ALTER TABLE chats ADD COLUMN sender_names TEXT")
+    conn.commit()
+
+
+def refresh_chat_sender_names(conn: sqlite3.Connection) -> None:
+    """Re-populate chats.sender_names from the current messages table.
+
+    Called at the end of ingest and on first server start after the
+    column is added. One full scan over messages — cheap enough since
+    the resulting column is read in O(1) per chat row by the landing
+    query.
+    """
+    conn.execute(
+        "WITH per_chat AS ("
+        "  SELECT chat_id, GROUP_CONCAT(sender_name, ' · ') AS s FROM ("
+        "    SELECT DISTINCT chat_id, sender_name FROM messages "
+        "    WHERE sender_name IS NOT NULL "
+        "      AND TRIM(sender_name) <> '' "
+        "      AND is_from_me = 0"
+        "  ) GROUP BY chat_id"
+        ") "
+        "UPDATE chats SET sender_names = "
+        "  (SELECT s FROM per_chat WHERE per_chat.chat_id = chats.id)"
+    )
     conn.commit()
 
 
