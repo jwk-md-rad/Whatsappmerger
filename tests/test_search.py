@@ -140,3 +140,15 @@ def test_list_chats_sender_names_lets_us_find_group_by_member(tmp_path: Path) ->
     beach = next(c for c in chats if c["jid"] == "333-group@g.us")
     assert beach["sender_names"] is not None
     assert "Carol" in beach["sender_names"]
+
+
+def test_list_chats_sender_names_includes_self(tmp_path: Path) -> None:
+    """User's own name must be in sender_names too — otherwise typing
+    "Me" / your own name in the landing filter narrows to zero, which
+    surprises users in the only-I-talk-here case."""
+    conn = _ingested(tmp_path)
+    chats = list_chats(conn)
+    # Bob: only one message, sent by us. Without including is_from_me
+    # senders, sender_names would be NULL for this chat.
+    bob = next(c for c in chats if c["jid"] == "222@s.whatsapp.net")
+    assert bob["sender_names"] is not None and bob["sender_names"].strip()

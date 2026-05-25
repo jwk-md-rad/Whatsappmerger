@@ -183,4 +183,10 @@ function applyFilter() {
   }
 })();
 
-filterEl.addEventListener("input", applyFilter);
+// Safari's browser-level autocomplete dropdown can populate the field
+// without firing `input`. Listen to a few related events so picking a
+// suggestion (or hitting the type=search clear-X) still triggers the
+// filter.
+for (const ev of ["input", "change", "search", "keyup"]) {
+  filterEl.addEventListener(ev, applyFilter);
+}

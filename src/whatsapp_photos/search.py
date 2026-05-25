@@ -182,7 +182,7 @@ def list_chats(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         "(SELECT GROUP_CONCAT(sender_name, ' · ') FROM ("
         "   SELECT DISTINCT sender_name FROM messages "
         "   WHERE chat_id = c.id AND sender_name IS NOT NULL "
-        "     AND TRIM(sender_name) <> '' AND is_from_me = 0"
+        "     AND TRIM(sender_name) <> ''"
         " )) AS sender_names, "
         "last_m.sent_at      AS last_message_at, "
         "last_m.body         AS last_message_body, "

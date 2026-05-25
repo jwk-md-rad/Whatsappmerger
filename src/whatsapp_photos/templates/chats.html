@@ -11,7 +11,9 @@
   <h1>{{ title }}</h1>
   <div class="chats-header-actions">
     <input type="search" id="chat-filter" placeholder="Filter chats by name"
-           autocomplete="off" aria-label="Filter chats by name">
+           autocomplete="off" autocorrect="off" autocapitalize="off"
+           spellcheck="false" name="chat-filter-q"
+           aria-label="Filter chats by name">
     <a href="/search" class="chats-search-link">Search messages</a>
   </div>
 </header>
