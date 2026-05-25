@@ -212,7 +212,10 @@ def _maybe_upgrade_indexes(db_path: Path) -> None:
     """Create any indexes that newer versions of the schema rely on.
 
     Old databases built before composite indexes were added would otherwise
-    make the chat-list query slow on large archives.
+    make the chat-list query slow on large archives. We try-and-shrug here
+    rather than aborting startup: if the DB is read-only, locked, or
+    otherwise can't accept the CREATE INDEX, the server still starts and
+    serves correctly, just with the slower chat-list query.
     """
     from .schema import ensure_indexes
 
@@ -223,14 +226,19 @@ def _maybe_upgrade_indexes(db_path: Path) -> None:
     except sqlite3.Error:
         return
     try:
-        existing = {
-            row[0] for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='index'"
-            )
-        }
+        try:
+            existing = {
+                row[0] for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='index'"
+                )
+            }
+        except sqlite3.Error:
+            return
         wanted = {"messages_chat_sent"}
         missing = wanted - existing
-        if missing:
+        if not missing:
+            return
+        try:
             print(
                 f"One-time index build for faster chat list "
                 f"({', '.join(sorted(missing))})…"
@@ -238,6 +246,12 @@ def _maybe_upgrade_indexes(db_path: Path) -> None:
             ensure_indexes(conn)
             conn.commit()
             print("Indexes built.")
+        except sqlite3.Error as e:
+            print(
+                f"Note: could not build chat-list index ({e}); the chat "
+                f"list may be slow. Proceeding anyway.",
+                file=sys.stderr,
+            )
     finally:
         conn.close()
 

@@ -200,25 +200,35 @@ def create_app(db_path: Path) -> FastAPI:
         chat_id: int,
         around: int | None = None,
         before: int | None = None,
+        before_id: int | None = None,
         after: int | None = None,
+        after_id: int | None = None,
         limit: int = Query(100, ge=1, le=500),
         _: None = Depends(require_auth),
     ) -> JSONResponse:
         """Paginate messages within a single chat.
 
+        Cursors are (sent_at, id) tuples so that messages sharing a unix
+        second don't get silently dropped at a batch boundary. The id half
+        of the cursor (``before_id`` / ``after_id``) is optional for
+        backward compatibility with old frontends that only sent the
+        timestamp.
+
         Modes (mutually exclusive):
-        - ``around=<unix>`` → N/2 messages ≤ unix + N/2 strictly > unix.
-        - ``before=<unix>`` → up to N messages strictly older than unix.
-        - ``after=<unix>``  → up to N messages strictly newer than unix.
-        - none of the above → the latest N messages (initial load).
+        - ``around=<unix>``                            → page centred on unix
+        - ``before=<unix>[&before_id=<id>]``           → older than cursor
+        - ``after=<unix>[&after_id=<id>]``             → newer than cursor
+        - none of the above                            → the latest N
 
         Result is always oldest-first.
         """
         conn = get_conn()
         try:
             if around is not None:
-                half = limit // 2
-                tail = limit - half
+                # Ensure both halves get at least one slot even at limit=1
+                # so the anchor message is always included.
+                half = max(1, limit // 2)
+                tail = max(0, limit - half)
                 before_rows = conn.execute(
                     f"SELECT {_MSG_COLS} FROM messages "
                     "WHERE chat_id=? AND sent_at IS NOT NULL AND sent_at <= ? "
@@ -237,20 +247,38 @@ def create_app(db_path: Path) -> FastAPI:
                     "before_count": len(before_rows),
                 }
             elif after is not None:
-                rows = conn.execute(
-                    f"SELECT {_MSG_COLS} FROM messages "
-                    "WHERE chat_id=? AND sent_at IS NOT NULL AND sent_at > ? "
-                    "ORDER BY sent_at ASC, id ASC LIMIT ?",
-                    (chat_id, after, limit),
-                ).fetchall()
+                if after_id is not None:
+                    rows = conn.execute(
+                        f"SELECT {_MSG_COLS} FROM messages "
+                        "WHERE chat_id=? AND sent_at IS NOT NULL "
+                        "  AND (sent_at > ? OR (sent_at = ? AND id > ?)) "
+                        "ORDER BY sent_at ASC, id ASC LIMIT ?",
+                        (chat_id, after, after, after_id, limit),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        f"SELECT {_MSG_COLS} FROM messages "
+                        "WHERE chat_id=? AND sent_at IS NOT NULL AND sent_at > ? "
+                        "ORDER BY sent_at ASC, id ASC LIMIT ?",
+                        (chat_id, after, limit),
+                    ).fetchall()
                 payload = {"messages": [_hit_dict(_row_to_hit(r)) for r in rows]}
             elif before is not None:
-                rows = conn.execute(
-                    f"SELECT {_MSG_COLS} FROM messages "
-                    "WHERE chat_id=? AND sent_at IS NOT NULL AND sent_at < ? "
-                    "ORDER BY sent_at DESC, id DESC LIMIT ?",
-                    (chat_id, before, limit),
-                ).fetchall()
+                if before_id is not None:
+                    rows = conn.execute(
+                        f"SELECT {_MSG_COLS} FROM messages "
+                        "WHERE chat_id=? AND sent_at IS NOT NULL "
+                        "  AND (sent_at < ? OR (sent_at = ? AND id < ?)) "
+                        "ORDER BY sent_at DESC, id DESC LIMIT ?",
+                        (chat_id, before, before, before_id, limit),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        f"SELECT {_MSG_COLS} FROM messages "
+                        "WHERE chat_id=? AND sent_at IS NOT NULL AND sent_at < ? "
+                        "ORDER BY sent_at DESC, id DESC LIMIT ?",
+                        (chat_id, before, limit),
+                    ).fetchall()
                 rows = list(reversed(rows))
                 payload = {"messages": [_hit_dict(_row_to_hit(r)) for r in rows]}
             else:

@@ -54,7 +54,10 @@ async function loadOlder() {
 
   try {
     const params = { limit: BATCH };
-    if (loaded.length) params.before = loaded[0].sent_at;
+    if (loaded.length) {
+      params.before = loaded[0].sent_at;
+      params.before_id = loaded[0].id;
+    }
     const data = await fetchThread(params);
     const batch = data.messages;
     hasMoreOlder = batch.length === BATCH;
@@ -81,7 +84,8 @@ async function loadNewer() {
   loadingNewer = true;
   bottomLoader.textContent = "Loading newer messages…";
   try {
-    const params = { limit: BATCH, after: loaded[loaded.length - 1].sent_at };
+    const last = loaded[loaded.length - 1];
+    const params = { limit: BATCH, after: last.sent_at, after_id: last.id };
     const data = await fetchThread(params);
     const batch = data.messages;
     hasMoreNewer = batch.length === BATCH;
