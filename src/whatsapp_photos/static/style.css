@@ -110,6 +110,41 @@ form#filters {
   align-items: center;
 }
 
+.secondary-filters {
+  display: contents;
+}
+
+#filters-toggle {
+  display: none;
+}
+
+/* On narrow screens stack the secondary filters behind a "Filters"
+   toggle so the header doesn't pile up to 5+ lines on an iPhone. */
+@media (max-width: 720px) {
+  #filters-toggle {
+    display: inline-block;
+    order: 2;
+  }
+  form#filters input[type=search] {
+    order: 1;
+    flex: 1 1 100%;
+  }
+  form#filters button[type=submit],
+  form#filters #clear-filters {
+    order: 3;
+  }
+  .secondary-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+    width: 100%;
+    order: 10;
+  }
+  form#filters.filters-collapsed .secondary-filters {
+    display: none;
+  }
+}
+
 form#filters input,
 form#filters select,
 form#filters button,
@@ -889,6 +924,44 @@ body.thread-page {
   min-width: 2.5em;
 }
 
+/* On phones the histogram squeezes 60-120 month-bars into ~360px, so
+   each bar is ~3px wide — unhittable on touch. Make the strip
+   horizontally scrollable with bars wide enough to tap, and grow the
+   bar height so an accidental tap still feels intentional. */
+@media (max-width: 720px) {
+  #histogram-wrap {
+    padding: 0.4rem 0.5rem 0.3rem;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  #histogram,
+  #histogram-axis {
+    max-width: none;
+    width: max-content;
+    margin: 0;
+  }
+  #histogram {
+    gap: 2px;
+    height: 44px;
+  }
+  #histogram .hist-bar {
+    flex: 0 0 auto;
+    width: 10px;
+    min-width: 10px;
+  }
+  #histogram-axis {
+    gap: 2px;
+  }
+  #histogram-axis .hist-tick {
+    flex: 0 0 auto;
+    width: 10px;
+    min-width: 10px;
+  }
+  #histogram-axis .hist-tick:not(:empty) {
+    min-width: 3em;
+  }
+}
+
 .bubble-highlight .thread-bubble {
   animation: bubble-flash 1.8s ease-out;
   box-shadow: 0 0 0 2px var(--accent), 0 0 16px var(--accent-glow);
@@ -909,6 +982,60 @@ body.thread-page {
 .thread-loader:empty {
   padding: 0;
   min-height: 0;
+}
+
+/* In-thread find bar (⌘F). Slides in under the header. */
+#find-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border-subtle);
+  position: sticky;
+  top: 0;
+  z-index: 4;
+}
+#find-bar[hidden] { display: none; }
+#find-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface-2);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  padding: 0.4rem 0.85rem;
+  font-size: 0.9rem;
+  outline: none;
+}
+#find-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+#find-status {
+  font-size: 0.8rem;
+  color: var(--fg-tertiary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  min-width: 6em;
+  text-align: right;
+}
+#find-bar button {
+  background: var(--surface-2);
+  color: var(--fg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+#find-bar button:hover {
+  background: var(--surface-3);
+  color: var(--fg);
 }
 
 #thread-messages {
@@ -1105,6 +1232,24 @@ body.chats-page {
   border-radius: 4px;
   font-size: 0.9em;
 }
+.chats-loading.chats-error {
+  color: var(--fg-secondary);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+}
+.retry-btn {
+  background: var(--accent);
+  color: rgba(0, 0, 0, 0.85);
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 999px;
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+.retry-btn:hover { background: var(--accent-hover); }
 
 .chat-row {
   display: flex;

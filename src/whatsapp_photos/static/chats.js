@@ -10,20 +10,33 @@ const SENDER_PALETTE = [
   "#5bd1a8", "#5cc5e6", "#7c8aff", "#c084f5",
 ];
 
-function chatColor(jid) {
-  if (!jid) return "var(--fg-secondary)";
+function _hash(s) {
   let h = 0;
-  for (let i = 0; i < jid.length; i++) h = (h * 31 + jid.charCodeAt(i)) | 0;
-  return SENDER_PALETTE[Math.abs(h) % SENDER_PALETTE.length];
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
 }
 
-function initials(name) {
+function chatColor(jid, name) {
+  // Seed off both JID and name so two contacts who happen to land on
+  // the same palette slot by JID-hash alone still differ if their
+  // names differ. With 2,211 chats and an 8-color palette duplicates
+  // are guaranteed; mixing in the name makes them at least
+  // distinguishable on the avatar wall.
+  const seed = (jid || "") + "|" + (name || "");
+  if (!seed.trim()) return "var(--fg-secondary)";
+  return SENDER_PALETTE[_hash(seed) % SENDER_PALETTE.length];
+}
+
+function initials(name, isGroup) {
   if (!name) return "?";
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (!parts.length) return "?";
-  const first = parts[0][0] || "";
-  const second = parts.length > 1 ? parts[parts.length - 1][0] : "";
-  return (first + second).toUpperCase();
+  // Group chats get up to 3 initials so similarly-named groups
+  // ("NKIT. Marktplaats" / "NKIT. Reizen" / "NKIT. Hulp") stop
+  // sharing "NM"/"NR"/"NH" pairs that look almost identical.
+  const max = isGroup ? 3 : 2;
+  const picked = parts.slice(0, max).map((p) => p[0] || "").join("");
+  return picked.toUpperCase();
 }
 
 function fmtRelative(unix) {
@@ -92,8 +105,8 @@ function renderRow(chat) {
 
   const avatar = document.createElement("div");
   avatar.className = "chat-avatar";
-  avatar.style.background = chatColor(chat.jid);
-  avatar.textContent = initials(chat.name || chat.jid);
+  avatar.style.background = chatColor(chat.jid, chat.name);
+  avatar.textContent = initials(chat.name || chat.jid, chat.is_group);
   if (chat.is_group) avatar.classList.add("is-group");
   a.appendChild(avatar);
 
@@ -164,12 +177,19 @@ function applyFilter() {
   }
 }
 
-(async () => {
+async function loadChats() {
+  loadingEl.hidden = false;
+  loadingEl.classList.remove("chats-error");
+  loadingEl.innerHTML = "";
+  loadingEl.textContent = "Loading chats…";
+  // Remove any rows from a previous (failed) attempt.
+  for (const row of listEl.querySelectorAll(".chat-row")) row.remove();
+
   try {
     const r = await fetch("/api/chats");
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const chats = await r.json();
-    loadingEl.remove();
+    loadingEl.hidden = true;
     listEl.removeAttribute("aria-busy");
     if (!chats.length) {
       emptyEl.hidden = false;
@@ -179,9 +199,21 @@ function applyFilter() {
     for (const c of chats) frag.appendChild(renderRow(c));
     listEl.appendChild(frag);
   } catch (e) {
-    loadingEl.textContent = "Failed to load chats. Check the server log.";
+    loadingEl.classList.add("chats-error");
+    loadingEl.innerHTML = "";
+    const msg = document.createElement("div");
+    msg.textContent = "Couldn't reach the archive. Make sure wa-photos is running on the laptop.";
+    loadingEl.appendChild(msg);
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "retry-btn";
+    retry.textContent = "Try again";
+    retry.addEventListener("click", loadChats);
+    loadingEl.appendChild(retry);
   }
-})();
+}
+
+loadChats();
 
 // Safari's browser-level autocomplete dropdown can populate the field
 // without firing `input`. Listen to a few related events so picking a

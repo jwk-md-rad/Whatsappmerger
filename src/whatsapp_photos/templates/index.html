@@ -9,36 +9,40 @@
 <body>
 <header>
   <h1>{{ title }}</h1>
-  <form id="filters">
+  <form id="filters" class="filters-collapsed">
     <input type="search" name="q" placeholder="Search messages, captions, sender, chat"
-           autocomplete="off" autofocus>
-    <div class="combobox" data-cb="chat">
-      <input type="text" class="cb-input" placeholder="All chats"
-             autocomplete="off" aria-label="Filter by chat">
-      <input type="hidden" name="chat_id">
-      <ul class="cb-list" role="listbox" hidden></ul>
+           autocomplete="off">
+    <button type="button" id="filters-toggle" aria-expanded="false"
+            aria-controls="secondary-filters">Filters</button>
+    <div id="secondary-filters" class="secondary-filters">
+      <div class="combobox" data-cb="chat">
+        <input type="text" class="cb-input" placeholder="All chats"
+               autocomplete="off" aria-label="Filter by chat">
+        <input type="hidden" name="chat_id">
+        <ul class="cb-list" role="listbox" hidden></ul>
+      </div>
+      <div class="combobox" data-cb="sender">
+        <input type="text" class="cb-input" placeholder="All senders"
+               autocomplete="off" aria-label="Filter by sender">
+        <input type="hidden" name="sender">
+        <ul class="cb-list" role="listbox" hidden></ul>
+      </div>
+      <label class="date-field">From <input type="date" name="since"></label>
+      <label class="date-field">Until <input type="date" name="until"></label>
+      <select name="type" aria-label="Message type">
+        <option value="">All types</option>
+        <option value="media">Media (photos, videos, voice)</option>
+        <option value="text">Text only</option>
+        <option value="image">Photos only</option>
+        <option value="audio">Voice notes</option>
+        <option value="video">Videos</option>
+      </select>
+      <select name="order" aria-label="Sort order">
+        <option value="newest">Newest first</option>
+        <option value="oldest">Oldest first</option>
+        <option value="relevance">Relevance</option>
+      </select>
     </div>
-    <div class="combobox" data-cb="sender">
-      <input type="text" class="cb-input" placeholder="All senders"
-             autocomplete="off" aria-label="Filter by sender">
-      <input type="hidden" name="sender">
-      <ul class="cb-list" role="listbox" hidden></ul>
-    </div>
-    <label class="date-field">From <input type="date" name="since"></label>
-    <label class="date-field">Until <input type="date" name="until"></label>
-    <select name="type" aria-label="Message type">
-      <option value="">All types</option>
-      <option value="media">Media (photos, videos, voice)</option>
-      <option value="text">Text only</option>
-      <option value="image">Photos only</option>
-      <option value="audio">Voice notes</option>
-      <option value="video">Videos</option>
-    </select>
-    <select name="order" aria-label="Sort order">
-      <option value="newest">Newest first</option>
-      <option value="oldest">Oldest first</option>
-      <option value="relevance">Relevance</option>
-    </select>
     <button type="submit">Search</button>
     <button type="button" id="clear-filters">Clear</button>
   </form>

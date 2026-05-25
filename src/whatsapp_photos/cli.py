@@ -238,7 +238,12 @@ def _maybe_upgrade_indexes(db_path: Path) -> None:
             }
         except sqlite3.Error:
             return
-        wanted = {"messages_chat_sent", "messages_chat_image_sent"}
+        wanted = {
+            "messages_chat_sent",
+            "messages_chat_image_sent",
+            "messages_image_sent_at",
+            "messages_video_sent_at",
+        }
         missing_idx = wanted - existing
 
         try:
@@ -262,6 +267,8 @@ def _maybe_upgrade_indexes(db_path: Path) -> None:
             if needs_sender_names:
                 add_chats_sender_names_column(conn)
                 refresh_chat_sender_names(conn)
+            # Re-stat so the planner notices the new (partial) indexes.
+            conn.execute("ANALYZE")
             conn.commit()
             print("DB upgraded.")
         except sqlite3.Error as e:

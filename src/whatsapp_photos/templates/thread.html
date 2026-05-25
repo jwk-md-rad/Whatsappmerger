@@ -21,9 +21,19 @@
       <input type="date" id="jump-date">
     </label>
     <a href="/search?chat_id={{ chat_id }}&type=media" class="thread-search-link" title="Show all photos, videos and voice notes in this chat">Media</a>
-    <a href="/search?chat_id={{ chat_id }}" class="thread-search-link" title="Search within this chat">Search</a>
+    <button type="button" id="find-toggle" class="thread-search-link"
+            aria-controls="find-bar" title="Find in this chat (⌘F)">Find</button>
+    <a href="/search?chat_id={{ chat_id }}" class="thread-search-link" title="Full search (with filters and across chats)">Search</a>
   </div>
 </header>
+<div id="find-bar" hidden>
+  <input type="search" id="find-input" placeholder="Find in this chat"
+         autocomplete="off" autocorrect="off" spellcheck="false">
+  <span id="find-status" aria-live="polite"></span>
+  <button type="button" id="find-prev" aria-label="Previous match">&#8593;</button>
+  <button type="button" id="find-next" aria-label="Next match">&#8595;</button>
+  <button type="button" id="find-close" aria-label="Close find bar">&times;</button>
+</div>
 <div id="histogram-wrap" hidden>
   <div id="histogram"></div>
   <div id="histogram-axis"></div>

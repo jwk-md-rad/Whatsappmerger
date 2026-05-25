@@ -73,7 +73,7 @@ async function loadOlder() {
       topLoader.hidden = true;
     }
   } catch (e) {
-    topLoader.textContent = "Failed to load older.";
+    topLoader.textContent = "Couldn't load older messages. Check the connection and scroll up again.";
   } finally {
     loadingOlder = false;
   }
@@ -95,7 +95,7 @@ async function loadNewer() {
     }
     bottomLoader.textContent = hasMoreNewer ? "" : "";
   } catch (e) {
-    bottomLoader.textContent = "Failed to load newer.";
+    bottomLoader.textContent = "Couldn't load newer messages. Check the connection and scroll down again.";
   } finally {
     loadingNewer = false;
   }
@@ -506,3 +506,119 @@ stage.addEventListener("scroll", () => {
     stage.scrollTop = stage.scrollHeight;
   }
 })();
+
+// ---------------------------------------------------------------------------
+// In-thread find bar (⌘F / Ctrl-F)
+// ---------------------------------------------------------------------------
+
+const findBar = document.getElementById("find-bar");
+const findInput = document.getElementById("find-input");
+const findStatus = document.getElementById("find-status");
+const findPrev = document.getElementById("find-prev");
+const findNext = document.getElementById("find-next");
+const findClose = document.getElementById("find-close");
+const findToggle = document.getElementById("find-toggle");
+
+let findMatches = [];      // array of {id, sent_at} message rows
+let findIndex = -1;
+let findDebounce = null;
+
+function openFindBar() {
+  findBar.hidden = false;
+  findInput.focus();
+  findInput.select();
+}
+
+function closeFindBar() {
+  findBar.hidden = true;
+  findMatches = [];
+  findIndex = -1;
+  findStatus.textContent = "";
+  findInput.value = "";
+}
+
+async function runFind() {
+  const q = findInput.value.trim();
+  if (!q) {
+    findMatches = [];
+    findIndex = -1;
+    findStatus.textContent = "";
+    return;
+  }
+  findStatus.textContent = "Searching…";
+  try {
+    const params = new URLSearchParams({
+      q,
+      chat_id: String(CHAT_ID),
+      limit: "200",
+      order: "oldest",
+    });
+    const r = await fetch(`/api/search?${params}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    findMatches = data.results.map((h) => ({ id: h.id, sent_at: h.sent_at }));
+    if (!findMatches.length) {
+      findStatus.textContent = `0 matches for "${q}"`;
+      findIndex = -1;
+      return;
+    }
+    findIndex = 0;
+    await goToMatch();
+  } catch (e) {
+    findStatus.textContent = "Couldn't search this chat.";
+  }
+}
+
+async function goToMatch() {
+  if (findIndex < 0 || findIndex >= findMatches.length) return;
+  const m = findMatches[findIndex];
+  findStatus.textContent = `${findIndex + 1} of ${findMatches.length}`;
+  // Reuse the existing jump infra to land on the right bubble.
+  await jumpToUnix(m.sent_at);
+  // jumpToUnix highlights the first bubble at-or-after `sent_at`; if
+  // we have the exact id, prefer flashing that instead.
+  const el = messagesEl.querySelector(`[data-message-id="${m.id}"]`);
+  if (el) {
+    document.querySelectorAll(".bubble-highlight").forEach((e) =>
+      e.classList.remove("bubble-highlight")
+    );
+    el.scrollIntoView({ block: "center", behavior: "auto" });
+    el.classList.add("bubble-highlight");
+    setTimeout(() => el.classList.remove("bubble-highlight"), 2000);
+  }
+}
+
+function stepFind(delta) {
+  if (!findMatches.length) return;
+  findIndex = (findIndex + delta + findMatches.length) % findMatches.length;
+  goToMatch();
+}
+
+if (findToggle) findToggle.addEventListener("click", openFindBar);
+if (findClose) findClose.addEventListener("click", closeFindBar);
+if (findPrev) findPrev.addEventListener("click", () => stepFind(-1));
+if (findNext) findNext.addEventListener("click", () => stepFind(1));
+
+if (findInput) {
+  findInput.addEventListener("input", () => {
+    clearTimeout(findDebounce);
+    findDebounce = setTimeout(runFind, 200);
+  });
+  findInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      stepFind(e.shiftKey ? -1 : 1);
+    } else if (e.key === "Escape") {
+      closeFindBar();
+    }
+  });
+}
+
+document.addEventListener("keydown", (e) => {
+  // ⌘F on Mac, Ctrl-F elsewhere. Don't preempt when an input already
+  // has focus and the user is searching there.
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
+    e.preventDefault();
+    openFindBar();
+  }
+});

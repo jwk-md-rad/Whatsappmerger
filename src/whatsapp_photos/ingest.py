@@ -173,6 +173,10 @@ def ingest(
         if preserved_meta:
             _write_meta(dst, preserved_meta)
 
+        # Let the planner know what's in the partial indexes so it
+        # actually picks them for global "newest images" queries
+        # instead of falling back to messages_type + temp-b-tree sort.
+        dst.execute("ANALYZE")
         dst.commit()
     finally:
         src.close()

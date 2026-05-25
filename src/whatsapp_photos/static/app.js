@@ -183,6 +183,14 @@ function renderCard(hit, index) {
   if (hit.type === "image") {
     const img = document.createElement("img");
     img.loading = "lazy";
+    // Use the photo's intrinsic ratio when we know it, so landscape
+    // shots don't get crammed into the previous forced 4:5 portrait.
+    // Cap at extreme ratios so panoramas / 1:8 receipts don't break
+    // the grid layout.
+    if (hit.width && hit.height) {
+      const ratio = Math.min(2, Math.max(0.5, hit.width / hit.height));
+      img.style.aspectRatio = `${ratio}`;
+    }
     img.src = hit.thumb_url;
     img.alt = hit.body || `Photo from ${hit.chat_name || hit.chat_jid}`;
     card.appendChild(img);
@@ -323,6 +331,27 @@ function clearFilters() {
 }
 
 clearBtn.addEventListener("click", clearFilters);
+
+// Filters disclosure: on mobile the secondary controls are hidden by
+// default behind the "Filters" toggle. On larger viewports CSS shows
+// them regardless, but we still honor the aria-expanded toggle so
+// keyboard users can collapse them.
+const filtersToggle = document.getElementById("filters-toggle");
+if (filtersToggle) {
+  filtersToggle.addEventListener("click", () => {
+    const collapsed = form.classList.toggle("filters-collapsed");
+    filtersToggle.setAttribute("aria-expanded", String(!collapsed));
+  });
+  // If the user lands with any secondary filter pre-populated (e.g.
+  // ?chat_id=X via the search link from a thread), expand the panel
+  // so they can see what's in effect.
+  if (hasAnyFilter(currentFilters()) &&
+      !(currentFilters().q && Object.keys(currentFilters())
+          .filter((k) => k !== "q" && k !== "order").every((k) => !currentFilters()[k]))) {
+    form.classList.remove("filters-collapsed");
+    filtersToggle.setAttribute("aria-expanded", "true");
+  }
+}
 
 function escapeHtml(s) {
   if (s == null) return "";
@@ -474,6 +503,7 @@ function renderBrowsePanel(chats, senders) {
     chatRow.appendChild(makeTile({
       name: c.name || c.jid,
       count: c.message_count != null ? c.message_count : c.photo_count,
+      unit: "message",
       sample: c.sample_photo_id,
       // Chat tiles open the chronological thread view directly — it's
       // what users want when picking a chat to read. To filter the
@@ -486,17 +516,23 @@ function renderBrowsePanel(chats, senders) {
     senderRow.appendChild(makeTile({
       name: s.sender_name || s.sender_jid,
       count: s.photo_count,
+      unit: "photo",
       sample: s.sample_photo_id,
       onClick: () => pivotTo("sender", s.sender_jid),
     }));
   }
 }
 
-function makeTile({ name, count, sample, onClick }) {
+function pluralize(n, unit) {
+  // Simple English -s pluralization; covers "message"/"photo" we use here.
+  return `${n.toLocaleString()} ${unit}${n === 1 ? "" : "s"}`;
+}
+
+function makeTile({ name, count, unit, sample, onClick }) {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "tile" + (sample ? "" : " tile-placeholder");
-  btn.title = `${name} · ${count} photo${count === 1 ? "" : "s"}`;
+  btn.title = `${name} · ${pluralize(count, unit)}`;
   btn.addEventListener("click", onClick);
 
   if (sample) {
@@ -521,7 +557,7 @@ function makeTile({ name, count, sample, onClick }) {
 
   const countEl = document.createElement("div");
   countEl.className = "tile-count";
-  countEl.textContent = `${count} photo${count === 1 ? "" : "s"}`;
+  countEl.textContent = pluralize(count, unit);
   textWrap.appendChild(countEl);
 
   btn.appendChild(textWrap);
