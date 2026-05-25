@@ -179,10 +179,15 @@ def list_chats(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         "SUM(CASE WHEN m.type = 'image' THEN 1 ELSE 0 END) AS photo_count, "
         "(SELECT id FROM messages WHERE chat_id = c.id AND type = 'image' "
         " ORDER BY sent_at DESC LIMIT 1) AS sample_photo_id, "
+        # Distinct names of people who've posted in this chat, used by
+        # the landing-page filter to match groups by member. We
+        # deliberately exclude is_from_me=1 — the user is in every chat
+        # they own, so including "Me" would make typing your own name
+        # match every row (= effectively no filter at all).
         "(SELECT GROUP_CONCAT(sender_name, ' · ') FROM ("
         "   SELECT DISTINCT sender_name FROM messages "
         "   WHERE chat_id = c.id AND sender_name IS NOT NULL "
-        "     AND TRIM(sender_name) <> ''"
+        "     AND TRIM(sender_name) <> '' AND is_from_me = 0"
         " )) AS sender_names, "
         "last_m.sent_at      AS last_message_at, "
         "last_m.body         AS last_message_body, "
