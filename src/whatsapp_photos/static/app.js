@@ -3,17 +3,12 @@
 const grid = document.getElementById("grid");
 const form = document.getElementById("filters");
 const statusEl = document.getElementById("status");
-const lightbox = document.getElementById("lightbox");
-const fullImg = document.getElementById("full");
-const meta = document.getElementById("meta");
 const clearBtn = document.getElementById("clear-filters");
 const browseSection = document.getElementById("browse");
-document.getElementById("close-lb").addEventListener("click", () => lightbox.close());
 
 let nextOffset = 0;
 let total = 0;
 let loadedHits = [];
-let currentIndex = -1;
 let chatJidToId = null;
 let chatById = new Map();   // id (string) -> {name, photo_count}
 let senderByJid = new Map(); // jid -> {name, photo_count}
@@ -312,90 +307,6 @@ function appendLoadMore() {
   grid.appendChild(btn);
 }
 
-function openLightbox(index) {
-  currentIndex = index;
-  const hit = loadedHits[index];
-  const date = fmtDateFull(hit.sent_at);
-  const fromName = hit.is_from_me ? "Me" : (hit.sender_name || hit.sender_jid || "?");
-  const chatName = hit.chat_name || hit.chat_jid;
-  const stage = document.querySelector(".lb-stage");
-  const textPanel = document.getElementById("lb-text");
-
-  if (hit.type === "image") {
-    fullImg.src = hit.photo_url;
-    fullImg.hidden = false;
-    textPanel.hidden = true;
-    stage.classList.remove("text-mode");
-  } else {
-    fullImg.src = "";
-    fullImg.hidden = true;
-    textPanel.hidden = false;
-    textPanel.textContent = hit.body || "";
-    stage.classList.add("text-mode");
-  }
-
-  meta.innerHTML = "";
-  const head = document.createElement("div");
-  const fromEl = makePivot(fromName, "sender", hit.sender_jid, hit.is_from_me);
-  fromEl.classList.add("from");
-  const strong = document.createElement("strong");
-  strong.appendChild(fromEl);
-  head.appendChild(strong);
-  head.appendChild(document.createTextNode(" in "));
-  head.appendChild(makePivot(chatName, "chat_id", String(hit._chat_id || ""), false));
-  meta.appendChild(head);
-
-  const sub = document.createElement("div");
-  if (hit.type === "image") {
-    sub.textContent =
-      `${date} · ${hit.width || "?"}×${hit.height || "?"} · ${hit.filename}`;
-  } else {
-    sub.textContent = date;
-  }
-  meta.appendChild(sub);
-
-  // For image messages, the body acts as caption; show it below.
-  if (hit.type === "image" && hit.body) {
-    const c = document.createElement("div");
-    c.className = "caption-full";
-    c.textContent = hit.body;
-    meta.appendChild(c);
-  }
-
-  const nav = document.createElement("div");
-  nav.className = "lb-nav";
-  nav.textContent = `${index + 1} of ${loadedHits.length}${total > loadedHits.length ? ` (${total} total)` : ""}`;
-  meta.appendChild(nav);
-
-  const prev = document.getElementById("lb-prev");
-  const next = document.getElementById("lb-next");
-  prev.disabled = index === 0;
-  next.disabled = index >= loadedHits.length - 1;
-
-  if (!lightbox.open) lightbox.showModal();
-}
-
-function showNext(delta) {
-  if (currentIndex < 0) return;
-  const next = currentIndex + delta;
-  if (next < 0 || next >= loadedHits.length) return;
-  openLightbox(next);
-}
-
-lightbox.addEventListener("keydown", (e) => {
-  if (e.key === "ArrowRight") { e.preventDefault(); showNext(1); }
-  else if (e.key === "ArrowLeft") { e.preventDefault(); showNext(-1); }
-});
-
-document.getElementById("lb-prev").addEventListener("click", (e) => {
-  e.preventDefault();
-  showNext(-1);
-});
-document.getElementById("lb-next").addEventListener("click", (e) => {
-  e.preventDefault();
-  showNext(1);
-});
-
 function clearFilters() {
   for (const input of form.querySelectorAll("input, select")) {
     if (input.type === "search" || input.type === "date" || input.type === "text") {
@@ -417,7 +328,8 @@ function escapeHtml(s) {
   if (s == null) return "";
   return String(s)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 // ---------------------------------------------------------------------------

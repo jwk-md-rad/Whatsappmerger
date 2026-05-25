@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from typing import Iterable
+from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -127,14 +127,14 @@ def create_app(db_path: Path) -> FastAPI:
         q: str | None = None,
         chat_id: int | None = None,
         sender: str | None = None,
-        type: str | None = None,
+        type: Literal["text", "image", "audio", "video"] | None = None,
         is_group: bool | None = None,
         is_from_me: bool | None = None,
         since: int | None = None,
         until: int | None = None,
         limit: int = Query(60, ge=1, le=500),
         offset: int = Query(0, ge=0),
-        order: str = Query("newest"),
+        order: Literal["newest", "oldest", "relevance"] = Query("newest"),
         _: None = Depends(require_auth),
     ) -> JSONResponse:
         conn = get_conn()
@@ -195,6 +195,17 @@ def create_app(db_path: Path) -> FastAPI:
         path, mime = _resolve_media(get_conn, message_id)
         return FileResponse(path, media_type=mime)
 
+    def _require_chat(chat_id: int) -> None:
+        conn = get_conn()
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM chats WHERE id = ?", (chat_id,)
+            ).fetchone()
+        finally:
+            conn.close()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Chat not found")
+
     @app.get("/api/thread/{chat_id}")
     def api_thread(
         chat_id: int,
@@ -222,6 +233,7 @@ def create_app(db_path: Path) -> FastAPI:
 
         Result is always oldest-first.
         """
+        _require_chat(chat_id)
         conn = get_conn()
         try:
             if around is not None:
@@ -297,6 +309,7 @@ def create_app(db_path: Path) -> FastAPI:
     @app.get("/api/histogram/{chat_id}")
     def api_histogram(chat_id: int, _: None = Depends(require_auth)) -> JSONResponse:
         """Per-month message counts for a single chat — feeds the scrubber."""
+        _require_chat(chat_id)
         conn = get_conn()
         try:
             rows = conn.execute(
@@ -401,7 +414,3 @@ def _resolve_media(get_conn, message_id: int) -> tuple[Path, str]:
     if not p.is_file():
         raise HTTPException(status_code=410, detail="Media file missing on disk")
     return p, row["mime_type"] or "application/octet-stream"
-
-
-# silence unused-import warnings
-_ = Iterable

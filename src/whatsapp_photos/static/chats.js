@@ -86,7 +86,9 @@ function renderRow(chat) {
   // someone's name surface group chats they're in, not just chats
   // literally titled with their name.
   const searchParts = [chat.name || "", chat.jid || "", chat.sender_names || ""];
-  a.dataset.searchKey = searchParts.join(" ").toLowerCase();
+  // toLocaleLowerCase rather than toLowerCase so non-Latin scripts
+  // (e.g. Turkish İ vs i) fold the way the user's locale expects.
+  a.dataset.searchKey = searchParts.join(" ").toLocaleLowerCase();
 
   const avatar = document.createElement("div");
   avatar.className = "chat-avatar";
@@ -128,7 +130,8 @@ function renderRow(chat) {
     preview.appendChild(document.createTextNode(text || ""));
   } else {
     preview.classList.add("muted");
-    preview.textContent = `${chat.message_count.toLocaleString()} messages`;
+    const n = chat.message_count;
+    preview.textContent = `${n.toLocaleString()} message${n === 1 ? "" : "s"}`;
   }
   bottomRow.appendChild(preview);
 
@@ -146,7 +149,7 @@ function renderRow(chat) {
 }
 
 function applyFilter() {
-  const q = filterEl.value.trim().toLowerCase();
+  const q = filterEl.value.trim().toLocaleLowerCase();
   const rows = listEl.querySelectorAll(".chat-row");
   let visible = 0;
   for (const row of rows) {

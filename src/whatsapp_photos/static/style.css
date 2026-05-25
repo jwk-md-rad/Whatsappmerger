@@ -879,8 +879,14 @@ body.thread-page {
   min-width: 0;
   text-align: center;
   white-space: nowrap;
-  overflow: visible;
+  overflow: hidden;
   line-height: 1;
+}
+/* Only year labels carry text. Give them a min-width so neighbouring
+   years stop running into each other on long-archive views, and clip
+   any that don't fit instead of overlapping. */
+#histogram-axis .hist-tick:not(:empty) {
+  min-width: 2.5em;
 }
 
 .bubble-highlight .thread-bubble {
@@ -899,6 +905,10 @@ body.thread-page {
   color: var(--fg-tertiary);
   padding: 1rem;
   font-style: italic;
+}
+.thread-loader:empty {
+  padding: 0;
+  min-height: 0;
 }
 
 #thread-messages {
