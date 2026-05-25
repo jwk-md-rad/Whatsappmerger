@@ -155,15 +155,29 @@ function renderCard(hit, index) {
   const card = document.createElement("div");
   card.className = "card card-" + hit.type;
   card.tabIndex = 0;
-  // Audio / video cards play inline — no lightbox click. Image and text
-  // open the lightbox as before.
-  const lightboxable = hit.type === "image" || hit.type === "text";
-  if (lightboxable) {
+
+  // Whole card click → open this message in its thread, scrolled and
+  // highlighted, with surrounding context. Pivots (sender / chat name)
+  // and inline media controls swallow the click via .closest checks.
+  const threadHref = threadLinkForHit(hit);
+  if (threadHref) {
+    card.classList.add("card-clickable");
+    card.title = "Open in conversation";
     card.addEventListener("click", (e) => {
       if (e.target.closest(".pivot")) return;
-      openLightbox(index);
+      // Audio/video controls live inside .media-wrap; let them handle
+      // their own clicks (play/pause/seek) without navigating away.
+      if (e.target.closest(".media-wrap")) return;
+      // Modifier-clicks open in a new tab — preserve that affordance.
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) {
+        window.open(threadHref, "_blank");
+        return;
+      }
+      window.location.href = threadHref;
     });
-    card.addEventListener("keypress", (e) => { if (e.key === "Enter") openLightbox(index); });
+    card.addEventListener("keypress", (e) => {
+      if (e.key === "Enter") window.location.href = threadHref;
+    });
   }
 
   if (hit.type === "image") {
@@ -238,6 +252,13 @@ function renderCard(hit, index) {
 
   card.appendChild(info);
   return card;
+}
+
+function threadLinkForHit(hit) {
+  const chatId = hit._chat_id;
+  if (!chatId) return null;
+  if (!hit.sent_at) return `/thread/${chatId}`;
+  return `/thread/${chatId}?at=${hit.sent_at}`;
 }
 
 function makePivot(label, fieldName, value, disabled) {

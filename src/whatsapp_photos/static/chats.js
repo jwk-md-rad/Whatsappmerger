@@ -82,7 +82,11 @@ function renderRow(chat) {
   const a = document.createElement("a");
   a.className = "chat-row";
   a.href = `/thread/${chat.id}`;
-  a.dataset.searchKey = (chat.name || chat.jid || "").toLowerCase();
+  // Search key: chat name + every distinct sender name. Lets typing
+  // someone's name surface group chats they're in, not just chats
+  // literally titled with their name.
+  const searchParts = [chat.name || "", chat.jid || "", chat.sender_names || ""];
+  a.dataset.searchKey = searchParts.join(" ").toLowerCase();
 
   const avatar = document.createElement("div");
   avatar.className = "chat-avatar";
