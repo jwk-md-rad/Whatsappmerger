@@ -401,6 +401,16 @@ main#grid {
   border-color: var(--border);
 }
 
+.card.card-unclickable {
+  cursor: default;
+  opacity: 0.7;
+}
+.card.card-unclickable:hover {
+  transform: none;
+  box-shadow: none;
+  border-color: var(--border-subtle);
+}
+
 .card img {
   width: 100%;
   aspect-ratio: 4 / 5;

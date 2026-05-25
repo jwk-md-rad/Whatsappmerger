@@ -64,7 +64,8 @@ def search_messages(
 ) -> list[MessageHit]:
     where: list[str] = []
     params: list[Any] = []
-    use_fts = bool(filters.query and filters.query.strip())
+    sanitized_q = _sanitize_fts_query(filters.query) if filters.query else ""
+    use_fts = bool(sanitized_q)
 
     select_cols = (
         "m.id, m.chat_jid, m.chat_name, m.is_group, m.sender_jid, m.sender_name, "
@@ -75,7 +76,7 @@ def search_messages(
         select_cols += ", snippet(messages_fts, 0, '<mark>', '</mark>', '…', 16) AS snippet"
         join = "FROM messages_fts JOIN messages m ON m.id = messages_fts.rowid"
         where.append("messages_fts MATCH ?")
-        params.append(_sanitize_fts_query(filters.query))
+        params.append(sanitized_q)
     else:
         select_cols += ", NULL AS snippet"
         join = "FROM messages m"
@@ -128,11 +129,12 @@ search_photos = search_messages
 def count_messages(conn: sqlite3.Connection, filters: SearchFilters) -> int:
     where: list[str] = []
     params: list[Any] = []
-    use_fts = bool(filters.query and filters.query.strip())
+    sanitized_q = _sanitize_fts_query(filters.query) if filters.query else ""
+    use_fts = bool(sanitized_q)
     if use_fts:
         join = "FROM messages_fts JOIN messages m ON m.id = messages_fts.rowid"
         where.append("messages_fts MATCH ?")
-        params.append(_sanitize_fts_query(filters.query))
+        params.append(sanitized_q)
     else:
         join = "FROM messages m"
 

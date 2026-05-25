@@ -178,6 +178,11 @@ function renderCard(hit, index) {
     card.addEventListener("keypress", (e) => {
       if (e.key === "Enter") window.location.href = threadHref;
     });
+  } else {
+    // Without a chat id we can't navigate. Mark visibly so users don't
+    // wonder why clicking does nothing.
+    card.classList.add("card-unclickable");
+    card.title = "This conversation isn't in the current archive";
   }
 
   if (hit.type === "image") {
@@ -696,17 +701,19 @@ async function loadFilterOptions() {
     }
   }
 
-  // Combobox options.
+  // Combobox options. Use total message_count, not photo_count — the
+  // archive holds text/audio/video too and text-only contacts were
+  // showing "(0)" next to their name.
   setComboboxOptions("chat", chats.map((c) => ({
     value: String(c.id),
-    label: `${c.name || c.jid} (${c.photo_count})`,
-    count: undefined,  // count is part of the label already
+    label: `${c.name || c.jid} (${(c.message_count ?? c.photo_count ?? 0).toLocaleString()})`,
+    count: undefined,
   })));
   setComboboxOptions("sender", senders
     .filter((s) => s.sender_jid)
     .map((s) => ({
       value: s.sender_jid,
-      label: `${s.sender_name || s.sender_jid} (${s.photo_count})`,
+      label: `${s.sender_name || s.sender_jid} (${(s.message_count ?? s.photo_count ?? 0).toLocaleString()})`,
       count: undefined,
     })));
 

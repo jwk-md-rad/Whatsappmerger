@@ -155,11 +155,16 @@ def create_app(db_path: Path) -> FastAPI:
             hits = search_messages(conn, filters, order_by=order)
         finally:
             conn.close()
+        # Only advertise a next page when we got a full page back AND we
+        # haven't already covered the total. Without the `len(hits) == limit`
+        # guard the frontend can re-request a page that returns 0 hits
+        # forever, because `offset + 0 < total` stays true.
+        more = len(hits) == limit and (offset + len(hits)) < total
         return JSONResponse(
             {
                 "total": total,
                 "results": [_hit_dict(h) for h in hits],
-                "next_offset": offset + len(hits) if (offset + len(hits)) < total else None,
+                "next_offset": offset + len(hits) if more else None,
             }
         )
 
