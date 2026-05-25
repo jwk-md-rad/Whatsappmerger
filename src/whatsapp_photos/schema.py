@@ -51,6 +51,11 @@ SCHEMA = [
     "CREATE INDEX IF NOT EXISTS messages_sent_at ON messages (sent_at)",
     "CREATE INDEX IF NOT EXISTS messages_chat_id ON messages (chat_id)",
     "CREATE INDEX IF NOT EXISTS messages_chat_sent ON messages (chat_id, sent_at)",
+    # Lets list_chats's sample_photo_id subquery (find the newest image
+    # per chat) jump straight to the matching row without scanning past
+    # the typically-much-more-numerous text messages.
+    "CREATE INDEX IF NOT EXISTS messages_chat_image_sent "
+    "ON messages (chat_id, sent_at) WHERE type = 'image'",
     "CREATE INDEX IF NOT EXISTS messages_sender ON messages (sender_jid)",
     "CREATE INDEX IF NOT EXISTS messages_type ON messages (type)",
     """

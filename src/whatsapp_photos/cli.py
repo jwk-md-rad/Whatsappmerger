@@ -234,7 +234,7 @@ def _maybe_upgrade_indexes(db_path: Path) -> None:
             }
         except sqlite3.Error:
             return
-        wanted = {"messages_chat_sent"}
+        wanted = {"messages_chat_sent", "messages_chat_image_sent"}
         missing = wanted - existing
         if not missing:
             return

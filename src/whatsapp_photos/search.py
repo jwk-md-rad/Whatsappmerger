@@ -197,7 +197,8 @@ def list_chats(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         "  ORDER BY sent_at DESC, id DESC LIMIT 1"
         ") "
         "GROUP BY c.id "
-        "ORDER BY last_message_at IS NULL, last_message_at DESC, c.name"
+        "ORDER BY last_message_at IS NULL, last_message_at DESC, "
+        "         c.name COLLATE NOCASE"
     ).fetchall()
     return [dict(r) for r in rows]
 
