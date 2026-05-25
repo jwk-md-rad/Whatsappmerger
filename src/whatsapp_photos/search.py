@@ -103,8 +103,11 @@ def search_messages(
         where.append("m.sent_at <= ?")
         params.append(filters.until_unix)
     if filters.type is not None:
-        where.append("m.type = ?")
-        params.append(filters.type)
+        if filters.type == "media":
+            where.append("m.type IN ('image', 'audio', 'video')")
+        else:
+            where.append("m.type = ?")
+            params.append(filters.type)
 
     order = _ORDER_BY.get(order_by, _ORDER_BY["newest"])
     if not use_fts and order_by == "relevance":
@@ -153,7 +156,10 @@ def count_messages(conn: sqlite3.Connection, filters: SearchFilters) -> int:
     if filters.until_unix is not None:
         where.append("m.sent_at <= ?"); params.append(filters.until_unix)
     if filters.type is not None:
-        where.append("m.type = ?"); params.append(filters.type)
+        if filters.type == "media":
+            where.append("m.type IN ('image', 'audio', 'video')")
+        else:
+            where.append("m.type = ?"); params.append(filters.type)
 
     where_clause = ("WHERE " + " AND ".join(where)) if where else ""
     sql = f"SELECT COUNT(*) {join} {where_clause}"

@@ -145,7 +145,7 @@ def create_app(db_path: Path) -> FastAPI:
         q: str | None = None,
         chat_id: int | None = None,
         sender: str | None = None,
-        type: Literal["text", "image", "audio", "video"] | None = None,
+        type: Literal["text", "image", "audio", "video", "media"] | None = None,
         is_group: bool | None = None,
         is_from_me: bool | None = None,
         since: int | None = None,
