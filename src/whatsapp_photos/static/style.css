@@ -1116,6 +1116,12 @@ body.chats-page {
   border-bottom: 1px solid var(--border-subtle);
   transition: background 0.12s;
 }
+/* Author `display: flex` above otherwise wins over the UA default
+   `[hidden] { display: none }`, so JS-driven `row.hidden = true` (used
+   by the filter) silently fails to hide the row. */
+.chat-row[hidden] {
+  display: none;
+}
 .chat-row:hover {
   background: var(--surface-1);
 }
