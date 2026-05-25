@@ -51,6 +51,24 @@ def create_app(db_path: Path) -> FastAPI:
     templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+    @app.middleware("http")
+    async def _no_cache_html_and_static(request: Request, call_next):
+        """Force Safari to re-fetch HTML / JS / CSS on every reload.
+
+        The archive is served from localhost (or Tailscale) so the
+        bandwidth cost is irrelevant, and aggressive caching has bitten
+        us repeatedly — a pushed fix sits invisible because the browser
+        is happily reusing day-old chats.js. Media (/api/thumb,
+        /api/photo, /api/media) and the JSON APIs are not affected.
+        """
+        response = await call_next(request)
+        path = request.url.path
+        if path == "/" or path.startswith(("/static/", "/search", "/thread/")):
+            response.headers["Cache-Control"] = "no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
+
     basic = HTTPBasic(auto_error=False)
 
     def get_conn() -> sqlite3.Connection:
